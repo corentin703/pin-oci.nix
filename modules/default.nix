@@ -1,3 +1,6 @@
 {
-  imports = [ ./containers.nix ];
+  imports = [
+    ./containers.nix
+    ./infra.nix
+  ];
 }

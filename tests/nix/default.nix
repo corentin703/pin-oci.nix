@@ -7,60 +7,28 @@
 # Offline module tests: unit (parseRef), integration (module evaluation against fixture
 # lockfiles) and e2e-equivalent (generated systemd units). Evaluated purely, no network.
 let
-  inherit (pkgs) lib;
+  helpers = import ./common.nix { inherit pkgs nixpkgs module; };
+  inherit (helpers)
+    lib
+    system
+    evalOn
+    eval
+    with'
+    failed
+    failedByPinOci
+    fails
+    web
+    lockOk
+    lockWrongArch
+    lockNoArch
+    lockAbsent
+    ;
   inherit (import ../../modules/refs.nix { inherit lib; }) parseRef;
 
-  system = pkgs.stdenv.hostPlatform.system;
   apply = import ../../src/apply.nix;
-
-  lockOk = ./fixtures/ok.lock;
-  lockWrongArch = ./fixtures/wrong-arch.lock;
-  lockNoArch = ./fixtures/no-arch.lock;
-  lockAbsent = ./fixtures/absent.lock; # intentionally does not exist
 
   caddyDigest = "sha256:" + lib.concatStrings (lib.replicate 64 (if system == "aarch64-linux" then "c" else "a"));
   caddyPinned = "docker.io/library/caddy@${caddyDigest}";
-
-  evalOn =
-    sys: modules:
-    (nixpkgs.lib.nixosSystem {
-      system = sys;
-      modules = [
-        module
-        {
-          system.stateVersion = "26.05";
-          boot.loader.grub.devices = [ "nodev" ];
-          fileSystems."/" = {
-            device = "none";
-            fsType = "tmpfs";
-          };
-          virtualisation.oci-containers.backend = "podman";
-        }
-      ]
-      ++ modules;
-    }).config;
-  eval = evalOn system;
-
-  with' = lockFile: containers: {
-    virtualisation.pin-oci = {
-      enable = true;
-      inherit lockFile containers;
-    };
-  };
-
-  # Messages of passing assertions may be invalid on purpose: only read the failing ones.
-  failed = config: lib.filter (a: !a.assertion) config.assertions;
-  failedByPinOci = config: map (a: lib.hasInfix "[pin-oci]" a.message) (failed config);
-  fails = x: !(builtins.tryEval (builtins.deepSeq x x)).success;
-
-  web = {
-    web = {
-      image = "caddy:2-alpine";
-      ports = [ "80:80" ];
-      environment.FOO = "bar";
-      volumes = [ "/srv:/srv:ro" ];
-    };
-  };
 
   locked = eval [ (with' lockOk web) ];
   missing = eval [ (with' lockAbsent web) ];
@@ -321,12 +289,13 @@ let
     };
   };
 
-  failures = lib.debug.runTests tests;
+  allTests = tests // (import ./infra.nix helpers).tests;
+  failures = lib.debug.runTests allTests;
 in
 pkgs.runCommand "pin-oci-module-tests" { } (
   if failures == [ ] then
     ''
-      echo "${toString (builtins.length (builtins.attrNames tests))} module tests passed"
+      echo "${toString (builtins.length (builtins.attrNames allTests))} module tests passed"
       touch $out
     ''
   else
