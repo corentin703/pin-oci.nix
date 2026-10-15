@@ -456,26 +456,32 @@ virtualisation.pin-oci.projects.monitoring = {
 
 ### 6.2 Compilation Rules to Milestones 1 & 2
 
+A project compiles into plain `virtualisation.pin-oci.containers`, `networks` and `volumes` entries (nothing is generated unless both `virtualisation.pin-oci.enable` and `projects.<p>.enable` are set). Milestones 1 and 2 then do the rest: locking, fail-fast, units, ordering.
+
+Project, service, network and volume names must match `[a-zA-Z0-9][a-zA-Z0-9_.-]*`. Generated names must be unique across the configuration (two projects, or a project and a hand-written entry, producing the same name is an assertion failure).
+
 1. **Name prefixing and `external`:**
-* Standardized container: `<project>-<service>` (e.g. `monitoring-grafana`).
-* Project `volumes.<v>` and `networks.<n>` carry an `external` flag (default `false`).
-* `external = false`: the resource is prefixed with the project (volume `<project>_<volume>`, e.g. `monitoring_grafana_data`; network `<project>-<network>`) and its init unit is generated. Volume references in the project's services (`grafana_data:/var/lib/grafana`) are rewritten to the prefixed name.
-* `external = true`: no prefix, no unit generated; an assertion requires the resource to exist in the global `virtualisation.pin-oci.{networks,volumes}`.
+* Container: `<project>-<service>` (e.g. `monitoring-grafana`). A service accepts exactly the options of a container (§4.1).
+* Project `volumes.<v>` and `networks.<n>` carry an `external` flag (default `false`); volumes also take `driver`, networks `subnet` and `internal`.
+* `external = false`: the resource is prefixed with the project (volume `<project>_<volume>`, e.g. `monitoring_grafana_data`; network `<project>-<network>`) and declared in the global `virtualisation.pin-oci.{networks,volumes}`, which generates its init unit (§5).
+* `external = true`: no prefix, nothing generated; an assertion requires the resource to exist in the global `virtualisation.pin-oci.{networks,volumes}`.
+* References inside the services are rewritten to the prefixed name when they designate a non-external project resource: the `volumes` sources (`grafana_data:/var/lib/grafana`), the `networks` entries and the network forms of `extraOptions` (`--network=`, `--net=`, two-element form), keeping any suffix (`:alias=db`). Anything else (external resources, bind mounts, undeclared names) is passed through unchanged.
 
 
 2. **Local DNS resolution:**
-`networks.default.enable = true` creates the `<project>-default` network (never external) and attaches it to all services of the project. Podman/Docker handles internal DNS resolution via the service name (`prometheus`).
+`networks.default.enable = true` creates the `<project>-default` network (never external, `enable` is `false` by default for `default` only) and attaches every service to it. Containers are named `<project>-<service>`, and Docker/Podman only resolve a container name or a network alias: each service therefore joins the default network with the alias `<service>`, so `prometheus` resolves inside the project. The alias syntax depends on the backend: Podman `--network=<net>:alias=<service>`, Docker `--network=name=<net>,alias=<service>`. Other project networks give no automatic alias (write one in the `networks` entry if needed).
 3. **`dependsOn` translation:**
-Injection of systemd dependencies on the target container:
+`dependsOn = [ "prometheus" ]` is rewritten to the flat name `<project>-prometheus` and handed to the native `oci-containers` option, which adds the target unit to both `After` and `Requires`:
 ```nix
 after = [ "${backend}-${project}-${depService}.service" ];
 requires = [ "${backend}-${project}-${depService}.service" ];
 
 ```
+A `dependsOn` naming a service absent from the project is an assertion failure.
 
 
 4. **Feeding the CLI:**
-`virtualisation.pin-oci.lockTargets` aggregates the images from `config.virtualisation.pin-oci.containers` and from all `config.virtualisation.pin-oci.projects.*.services`; `pin-oci lock` consumes that single option.
+Project services are lowered into `virtualisation.pin-oci.containers`, so `virtualisation.pin-oci.lockTargets` covers them with no extra code; `pin-oci lock` consumes that single option.
 
 ---
 
