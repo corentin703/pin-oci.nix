@@ -6,9 +6,8 @@ use std::process::Command;
 
 use serde::Deserialize;
 
-/// Evaluated on `nixosConfigurations.<host>.config`. Never depends on the lockfile.
-const APPLY: &str = "c: { system = c.nixpkgs.hostPlatform.system; \
-                     targets = c.virtualisation.pin-oci.lockTargets; }";
+/// Never depends on the lockfile; also exercised by the Nix module tests.
+const APPLY: &str = include_str!("apply.nix");
 
 #[derive(Debug, PartialEq, Eq, Deserialize)]
 pub(crate) struct Declared {
@@ -155,7 +154,7 @@ mod tests {
         );
         let calls = stub.calls.borrow();
         assert_eq!(calls[0].0, ".#nixosConfigurations.\"box\".config");
-        assert!(calls[0].1.contains("lockTargets") && calls[0].1.contains("hostPlatform.system"));
+        assert!(calls[0].1.contains("lockTargets") && calls[0].1.contains("pin-oci.system"));
     }
 
     #[test]

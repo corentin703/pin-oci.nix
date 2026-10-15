@@ -1,0 +1,39 @@
+{
+  "version": 1,
+  "images": {
+    "docker.io/library/caddy:2-alpine": {
+      "registry": "docker.io",
+      "repository": "library/caddy",
+      "tag": "2-alpine",
+      "arch": {
+        "x86_64-linux": {
+          "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "os": "linux",
+          "architecture": "amd64"
+        },
+        "aarch64-linux": {
+          "digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "os": "linux",
+          "architecture": "arm64"
+        }
+      }
+    },
+    "docker.io/library/redis:7": {
+      "registry": "docker.io",
+      "repository": "library/redis",
+      "tag": "7",
+      "arch": {
+        "x86_64-linux": {
+          "digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "os": "linux",
+          "architecture": "amd64"
+        },
+        "aarch64-linux": {
+          "digest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "os": "linux",
+          "architecture": "arm64"
+        }
+      }
+    }
+  }
+}

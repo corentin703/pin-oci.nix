@@ -36,6 +36,10 @@
       # buildRustPackage runs `cargo test` in its check phase.
       checks = forAllSystems (pkgs: {
         inherit (self.packages.${pkgs.stdenv.hostPlatform.system}) pin-oci;
+        module-tests = import ./tests/nix {
+          inherit pkgs nixpkgs;
+          module = self.nixosModules.default;
+        };
       });
     };
 }

@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "images": {
+    "docker.io/library/caddy:2-alpine": {
+      "registry": "docker.io",
+      "repository": "library/caddy",
+      "tag": "2-alpine"
+    }
+  }
+}
