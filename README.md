@@ -10,9 +10,9 @@ committed `pin-oci.lock`. The NixOS module reads that file and makes
 network, and an image without a valid digest for the host platform fails evaluation
 with the command to run.
 
-> **Status.** Milestones 1 (pinning engine, `pin-oci lock` / `pin-oci check`) and 2
-> (networks and volumes) are implemented. Compose-style projects (milestone 3) are
-> specified in [`BIBLE.md`](BIBLE.md) but not implemented yet.
+> **Status.** All three milestones of [`BIBLE.md`](BIBLE.md) are implemented: the pinning
+> engine (`pin-oci lock` / `pin-oci check`), shared networks and volumes, and compose-style
+> projects.
 
 - [User manual](#user-manual)
 - [Development environment](#development-environment)
@@ -225,6 +225,78 @@ are left to the backend. Network and volume names must match
 > **Limitation.** Resources are created by root. A rootless Podman container
 > (`podman.user` other than `root`) does not see them.
 
+### 7. Projects
+
+A project groups interdependent services under one namespace, like a compose file. It is
+sugar: it compiles into the containers, networks and volumes of the previous sections, so
+locking, fail-fast and unit ordering apply unchanged.
+
+```nix
+{
+  virtualisation.pin-oci = {
+    enable = true;
+    lockFile = ./pin-oci.lock;
+
+    projects.monitoring = {
+      enable = true;
+      networks.default.enable = true;   # creates monitoring-default, every service joins it
+
+      services = {
+        prometheus = {
+          image = "prom/prometheus:v2.50.0";
+          volumes = [ "prom_data:/prometheus" ];
+          ports = [ "9090:9090" ];
+        };
+        grafana = {
+          image = "grafana/grafana:10.4.0";
+          dependsOn = [ "prometheus" ];
+          ports = [ "3000:3000" ];
+          volumes = [ "grafana_data:/var/lib/grafana" ];
+        };
+      };
+
+      volumes.prom_data = { };
+      volumes.grafana_data = { };
+    };
+  };
+}
+```
+
+A service accepts the options of a container. What the project does for you:
+
+| You write | You get |
+| --- | --- |
+| service `grafana` in project `monitoring` | container `monitoring-grafana`, unit `<backend>-monitoring-grafana.service` |
+| volume `grafana_data` | volume `monitoring_grafana_data`, created by its own unit |
+| network `backend` | network `monitoring-backend`, created by its own unit |
+| `volumes = [ "grafana_data:/x" ]` | rewritten to `monitoring_grafana_data:/x` |
+| `networks = [ "backend" ]`, `extraOptions = [ "--network=backend" ]` | rewritten to `monitoring-backend` (a suffix like `:alias=db` is kept) |
+| `dependsOn = [ "prometheus" ]` | `After` and `Requires` on `monitoring-prometheus` |
+| `networks.default.enable = true` | every service joins `monitoring-default` |
+
+**Names inside the project.** Containers are named `<project>-<service>`, so on its own
+`prometheus` would not resolve. Each service therefore joins the default network with the
+alias `<service>` (`monitoring-default:alias=prometheus` with Podman,
+`name=monitoring-default,alias=prometheus` with Docker): `grafana` reaches `prometheus` by
+that name. Other project networks add no automatic alias; write one in the entry if you
+need it (`networks = [ "backend:alias=db" ]`, in the syntax of your backend).
+
+**`external`.** `volumes.<v>.external = true` and `networks.<n>.external = true` refer to a
+resource declared in the global `virtualisation.pin-oci.volumes` / `networks`: no prefix,
+no unit, references left as written. Evaluation fails if the global resource does not
+exist. The `default` network cannot be external.
+
+```nix
+virtualisation.pin-oci.volumes.shared_data = { };
+virtualisation.pin-oci.projects.monitoring.volumes.shared_data.external = true;
+```
+
+Project, service, network and volume names must match `[a-zA-Z0-9][a-zA-Z0-9_.-]*`. Two
+projects that generate the same name (`a-b` + service `c`, and `a` + service `b-c`) fail
+evaluation, as does a `dependsOn` naming a service that is not in the project.
+
+`pin-oci lock` locks project images with the others; the CLI needs no flag for projects.
+
 ### Image references
 
 References are normalized to a canonical key (the key of `pin-oci.lock`):
@@ -265,6 +337,8 @@ that file are not usable.
 | `cannot run skopeo` / `cannot run nix` | The binary is not in `PATH` (not needed with the packaged `pin-oci`, which wraps `skopeo`). |
 | `skopeo failed … manifest unknown` | The tag does not exist in the registry. |
 | `no manifest for the host platform …` | The image is not published for your architecture. |
+| `[pin-oci] dependsOn names a service that is not in the project` | Typo in a project `dependsOn`; names are the service names without the project prefix. |
+| `[pin-oci] External resources missing …` | An `external = true` resource is not declared in `virtualisation.pin-oci.networks` / `volumes`. |
 
 ---
 
@@ -321,9 +395,9 @@ registry).
 | --- | --- | --- |
 | Rust unit | `src/*.rs` (`#[cfg(test)]`) | lockfile model, platform mapping, manifest resolution, `check` / `lock` logic, with `nix` and `skopeo` behind traits and stubbed. |
 | Rust end-to-end | `tests/check_cli.rs`, `tests/lock_cli.rs` | The real binary against a fake `nix` and a fake `skopeo` placed in `PATH`. `tests/fixtures/` holds real `skopeo` outputs captured once. |
-| Nix modules | `tests/nix/default.nix`, `infra.nix` (run by `nix flake check`) | Reference normalization, module evaluation against fixture lockfiles (present / missing / wrong architecture / corrupt), the generated systemd units, laziness of `lockTargets`, container ordering, and the exact expression the CLI evaluates (`src/apply.nix`, shared with Rust). |
+| Nix modules | `tests/nix/default.nix`, `infra.nix`, `projects.nix`, `resources.nix` (run by `nix flake check`) | Reference normalization, module evaluation against fixture lockfiles (present / missing / wrong architecture / corrupt), the generated systemd units, laziness of `lockTargets`, container ordering, and the exact expression the CLI evaluates (`src/apply.nix`, shared with Rust). |
 | Generated scripts | `tests/nix/infra-scripts.nix` | The network and volume unit scripts executed against a stateful fake backend: idempotence, flags, recreation, failure propagation. |
-| NixOS VM | `tests/nix/vm-infra.nix` | Real `podman` and `docker` in a VM: resources created at boot, flags applied, units idempotent, container unit ordered after its resources. Needs KVM (`system-features = kvm nixos-test`). |
+| NixOS VM | `tests/nix/vm-infra.nix`, `vm-projects.nix` | Real `podman` and `docker` in a VM: resources created at boot, flags applied, units idempotent, container units ordered after their resources; for projects, prefixed and external resources, `dependsOn` ordering, and services resolving each other by bare name on the default network. Needs KVM (`system-features = kvm nixos-test`). |
 
 Run a single check, for instance:
 
@@ -331,6 +405,7 @@ Run a single check, for instance:
 $ nix build .#checks.x86_64-linux.module-tests -L   # fast, evaluation only
 $ nix build .#checks.x86_64-linux.infra-scripts -L
 $ nix build .#checks.x86_64-linux.vm-infra -L        # boots two VMs, about a minute
+$ nix build .#checks.x86_64-linux.vm-projects -L
 ```
 
 When a test fails it prints the failing cases. To confirm a guarantee is really tested,
@@ -363,6 +438,9 @@ pin-oci.nix/
 │   ├── default.nix     # module entry point
 │   ├── containers.nix  # milestone 1: options, assertion, lowering
 │   ├── infra.nix       # milestone 2: network / volume units, container ordering
+│   ├── projects.nix    # milestone 3: projects compiled to containers, networks, volumes
+│   ├── resources.nix   # pure helpers: name rule, network / volume reference parsing, rewriting
+│   ├── container-module.nix  # oci-containers options shared by containers and services
 │   └── refs.nix        # pure image reference normalization
 ├── tests/              # Rust e2e + fixtures; nix/ holds the module, script and VM tests
 ├── flake.nix           # nixosModules.default, packages.pin-oci, devShell, checks
