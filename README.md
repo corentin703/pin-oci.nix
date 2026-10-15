@@ -10,9 +10,9 @@ committed `pin-oci.lock`. The NixOS module reads that file and makes
 network, and an image without a valid digest for the host platform fails evaluation
 with the command to run.
 
-> **Status.** Milestone 1 (pinning engine, `pin-oci lock` / `pin-oci check`) is
-> implemented. Networks, volumes (milestone 2) and compose-style projects (milestone 3)
-> are specified in [`BIBLE.md`](BIBLE.md) but not implemented yet.
+> **Status.** Milestones 1 (pinning engine, `pin-oci lock` / `pin-oci check`) and 2
+> (networks and volumes) are implemented. Compose-style projects (milestone 3) are
+> specified in [`BIBLE.md`](BIBLE.md) but not implemented yet.
 
 - [User manual](#user-manual)
 - [Development environment](#development-environment)
@@ -175,6 +175,56 @@ then make it visible to the flake:
 `pin-oci lock` and `check` evaluate only the list of images and the host platform, never
 the lockfile, so they work on a configuration that does not build yet.
 
+### 6. Networks and volumes
+
+Declare shared networks and volumes once; pin-oci creates them before the containers that
+use them.
+
+```nix
+{
+  virtualisation.pin-oci = {
+    enable = true;
+    lockFile = ./pin-oci.lock;
+
+    networks.app-net = {
+      subnet = "10.89.1.0/24"; # optional
+      internal = false;        # optional, true = no Internet gateway
+    };
+
+    volumes.postgres_data = {
+      driver = "local";        # optional, the default
+    };
+
+    containers.db = {
+      image = "postgres:16-alpine";
+      volumes = [ "postgres_data:/var/lib/postgresql/data" ];
+      networks = [ "app-net" ];  # or extraOptions = [ "--network=app-net" ];
+    };
+  };
+}
+```
+
+For each network and volume a `oneshot` unit `<backend>-network-<name>.service` /
+`<backend>-volume-<name>.service` is generated. It runs `<backend> network|volume inspect`
+and creates the resource only when it is absent, so running it again changes nothing, and a
+resource removed by hand is recreated the next time the unit runs. The units are enabled at
+boot, so declared resources exist even if no container uses them. With the `docker` backend
+they are ordered after `docker.service`.
+
+A container gets `after` and `requires` on every declared resource it references:
+
+- a network, through `networks`, `extraOptions = [ "--network=<n>" ]`, `"--net=<n>"` or the
+  two-element form `[ "--network" "<n>" ]` (a suffix such as `:alias=db` is ignored);
+- a volume, through the source of a `volumes` entry (`"<name>:<path>[:opts]"`).
+
+Names that are not declared in `virtualisation.pin-oci.networks` / `volumes` (`host`,
+`bridge`, a bind mount like `/srv:/srv`, a volume you manage yourself) get no dependency and
+are left to the backend. Network and volume names must match
+`[a-zA-Z0-9][a-zA-Z0-9_.-]*`, otherwise evaluation fails.
+
+> **Limitation.** Resources are created by root. A rootless Podman container
+> (`podman.user` other than `root`) does not see them.
+
 ### Image references
 
 References are normalized to a canonical key (the key of `pin-oci.lock`):
@@ -271,12 +321,16 @@ registry).
 | --- | --- | --- |
 | Rust unit | `src/*.rs` (`#[cfg(test)]`) | lockfile model, platform mapping, manifest resolution, `check` / `lock` logic, with `nix` and `skopeo` behind traits and stubbed. |
 | Rust end-to-end | `tests/check_cli.rs`, `tests/lock_cli.rs` | The real binary against a fake `nix` and a fake `skopeo` placed in `PATH`. `tests/fixtures/` holds real `skopeo` outputs captured once. |
-| Nix modules | `tests/nix/` (run by `nix flake check`) | Reference normalization, module evaluation against fixture lockfiles (present / missing / wrong architecture / corrupt), the generated systemd unit, laziness of `lockTargets`, and the exact expression the CLI evaluates (`src/apply.nix`, shared with Rust). |
+| Nix modules | `tests/nix/default.nix`, `infra.nix` (run by `nix flake check`) | Reference normalization, module evaluation against fixture lockfiles (present / missing / wrong architecture / corrupt), the generated systemd units, laziness of `lockTargets`, container ordering, and the exact expression the CLI evaluates (`src/apply.nix`, shared with Rust). |
+| Generated scripts | `tests/nix/infra-scripts.nix` | The network and volume unit scripts executed against a stateful fake backend: idempotence, flags, recreation, failure propagation. |
+| NixOS VM | `tests/nix/vm-infra.nix` | Real `podman` and `docker` in a VM: resources created at boot, flags applied, units idempotent, container unit ordered after its resources. Needs KVM (`system-features = kvm nixos-test`). |
 
-Run only the Nix module tests:
+Run a single check, for instance:
 
 ```console
-$ nix build .#checks.x86_64-linux.module-tests -L
+$ nix build .#checks.x86_64-linux.module-tests -L   # fast, evaluation only
+$ nix build .#checks.x86_64-linux.infra-scripts -L
+$ nix build .#checks.x86_64-linux.vm-infra -L        # boots two VMs, about a minute
 ```
 
 When a test fails it prints the failing cases. To confirm a guarantee is really tested,
@@ -308,8 +362,9 @@ pin-oci.nix/
 ├── modules/
 │   ├── default.nix     # module entry point
 │   ├── containers.nix  # milestone 1: options, assertion, lowering
+│   ├── infra.nix       # milestone 2: network / volume units, container ordering
 │   └── refs.nix        # pure image reference normalization
-├── tests/              # Rust e2e + fixtures; nix/ holds the module tests
+├── tests/              # Rust e2e + fixtures; nix/ holds the module, script and VM tests
 ├── flake.nix           # nixosModules.default, packages.pin-oci, devShell, checks
 ├── devenv.nix          # development environment
 └── BIBLE.md            # specification
