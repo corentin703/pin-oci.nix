@@ -289,8 +289,11 @@ nix eval --json <ref>#nixosConfigurations.<host>.config \
 > **OPEN POINT (not settled):** `manifest inspect` on an image that is not an index returns a single manifest without `platform` (verified with `docker` 29.8.1: the architecture only lives in the config blob). Handling of single-platform images is to be decided before task 1.3. `podman` output is not yet verified.
 
 
-* `pin-oci check [--flake <ref>]`:
-Checks that all declared images are present in the lockfile without modifying any files (exit code 0 = in sync, 1 = out of sync; suited for CI steps).
+* `pin-oci check [--flake <ref>] [--file <path>]`:
+Checks that every key of `lockTargets` has an entry for the host platform in the lockfile, without modifying any file. It evaluates `{ system = config.nixpkgs.hostPlatform.system; targets = attrNames config.virtualisation.pin-oci.lockTargets; }`, never the lockfile. Lockfile entries absent from `lockTargets` are ignored (only `lock` prunes them); a missing lockfile counts as empty.
+Exit codes: 0 = in sync, 1 = out of sync, 2 = error (nix failure, unreadable or invalid lockfile, remote flake without `--file`). Suited for CI steps.
+
+`--flake` takes `<flake>#<host>` and targets `nixosConfigurations."<host>".config`; a reference without `#<host>` is an error.
 
 ---
 
@@ -418,6 +421,7 @@ pin-oci.nix/
 ├── Cargo.toml
 ├── src/
 │   ├── main.rs         # CLI entry point, clap subcommands
+│   ├── check.rs        # `check` command: targets vs lockfile
 │   ├── nix.rs          # nix eval invocation, lockTargets + backend parsing
 │   ├── registry.rs     # Runtime trait: `<backend> manifest inspect`, platform extraction
 │   └── lockfile.rs     # BTreeMap model, JSON serialization

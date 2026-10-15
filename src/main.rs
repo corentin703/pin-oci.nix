@@ -1,4 +1,10 @@
-use std::path::PathBuf;
+mod check;
+mod lockfile;
+mod nix;
+#[cfg(test)]
+mod testutil;
+
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
@@ -23,20 +29,41 @@ enum Command {
     },
     /// Check that every declared image is present in the lockfile
     Check {
-        /// Flake reference to evaluate
+        /// Flake reference to evaluate, as <flake>#<host>
         #[arg(long, default_value = ".")]
         flake: String,
+        /// Lockfile to read (default: <flake root>/pin-oci.lock)
+        #[arg(long)]
+        file: Option<PathBuf>,
     },
 }
 
+/// Exit codes: 0 = in sync, 1 = out of sync, 2 = error.
 fn main() -> ExitCode {
-    let cli = Cli::parse();
-    let name = match cli.command {
-        Command::Lock { .. } => "lock",
-        Command::Check { .. } => "check",
-    };
-    eprintln!("pin-oci {name}: not implemented");
-    ExitCode::FAILURE
+    match Cli::parse().command {
+        Command::Lock { .. } => {
+            eprintln!("pin-oci lock: not implemented");
+            ExitCode::from(2)
+        }
+        Command::Check { flake, file } => run_check(&flake, file.as_deref()),
+    }
+}
+
+fn run_check(flake: &str, file: Option<&Path>) -> ExitCode {
+    match check::check(&nix::NixCli, flake, file) {
+        Ok(report) if report.is_in_sync() => {
+            println!("{}", report.message());
+            ExitCode::SUCCESS
+        }
+        Ok(report) => {
+            eprintln!("{}", report.message());
+            ExitCode::from(1)
+        }
+        Err(e) => {
+            eprintln!("pin-oci: error: {e}");
+            ExitCode::from(2)
+        }
+    }
 }
 
 #[cfg(test)]
@@ -75,14 +102,26 @@ mod tests {
     #[test]
     fn check_defaults() {
         match parse(&["check"]).unwrap().command {
-            Command::Check { flake } => assert_eq!(flake, "."),
+            Command::Check { flake, file } => {
+                assert_eq!(flake, ".");
+                assert_eq!(file, None);
+            }
             other => panic!("unexpected command: {other:?}"),
         }
     }
 
     #[test]
-    fn check_rejects_file_flag() {
-        assert!(parse(&["check", "--file", "x.lock"]).is_err());
+    fn check_with_flake_and_file() {
+        match parse(&["check", "--flake", ".#box", "--file", "x.lock"])
+            .unwrap()
+            .command
+        {
+            Command::Check { flake, file } => {
+                assert_eq!(flake, ".#box");
+                assert_eq!(file, Some(PathBuf::from("x.lock")));
+            }
+            other => panic!("unexpected command: {other:?}"),
+        }
     }
 
     #[test]
