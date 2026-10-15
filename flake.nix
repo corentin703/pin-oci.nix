@@ -44,6 +44,10 @@
           inherit pkgs;
           module = self.nixosModules.default;
         };
+        vm-projects = import ./tests/nix/vm-projects.nix {
+          inherit pkgs;
+          module = self.nixosModules.default;
+        };
         infra-scripts = import ./tests/nix/infra-scripts.nix {
           inherit pkgs nixpkgs;
           module = self.nixosModules.default;
