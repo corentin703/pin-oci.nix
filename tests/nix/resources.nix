@@ -121,5 +121,81 @@ in
         unrelated = [ ];
       };
     };
+
+    # ---- rewriting ----
+    testRenameNetworkValue = {
+      expr = map (r.renameNetworkValue (n: "p-${n}")) [
+        "backend"
+        "backend:alias=db"
+        "name=backend"
+        "name=backend,alias=db"
+        "alias=db,name=backend"
+        "driver-opt=x=y,name=backend,alias=db"
+      ];
+      expected = [
+        "p-backend"
+        "p-backend:alias=db"
+        "name=p-backend"
+        "name=p-backend,alias=db"
+        "alias=db,name=p-backend"
+        "driver-opt=x=y,name=p-backend,alias=db"
+      ];
+    };
+    testRenameOnlyTouchesTheNetworkName = {
+      expr = r.renameNetworkValue (n: if n == "backend" then "p-backend" else n) "host";
+      expected = "host";
+    };
+    testRenameNetworkOptions = {
+      expr = r.renameNetworkOptions (n: if n == "backend" then "p-backend" else n) [
+        "--cap-add=NET_ADMIN"
+        "--network=backend"
+        "--net=backend:alias=x"
+        "--network"
+        "backend"
+        "--net"
+        "name=backend,alias=y"
+        "--network=host"
+        "--hostname=backend"
+        "--init"
+      ];
+      expected = [
+        "--cap-add=NET_ADMIN"
+        "--network=p-backend"
+        "--net=p-backend:alias=x"
+        "--network"
+        "p-backend"
+        "--net"
+        "name=p-backend,alias=y"
+        "--network=host"
+        "--hostname=backend"
+        "--init"
+      ];
+    };
+    testRenameNetworkOptionsEdgeCases = {
+      expr = {
+        empty = r.renameNetworkOptions (n: "x-${n}") [ ];
+        trailingFlag = r.renameNetworkOptions (n: "x-${n}") [ "--network" ];
+      };
+      expected = {
+        empty = [ ];
+        trailingFlag = [ "--network" ];
+      };
+    };
+    testRenameVolumeEntry = {
+      expr = map (r.renameVolumeEntry (v: if v == "data" then "p_data" else v)) [
+        "data:/d"
+        "data:/d:ro,Z"
+        "/srv:/srv"
+        "other:/o"
+        "./data:/d"
+      ];
+      expected = [
+        "p_data:/d"
+        "p_data:/d:ro,Z"
+        "/srv:/srv"
+        "other:/o"
+        "./data:/d"
+      ];
+    };
   };
 }

@@ -35,4 +35,42 @@ rec {
           [ ]
       ) opts
     );
+
+  # Replaces the network name inside a `--network` value, keeping the rest of the value.
+  renameNetworkValue =
+    rename: value:
+    let
+      csv = builtins.match "(.*,)?name=([^,]*)(.*)" value;
+      before = if csv == null then "" else (if builtins.elemAt csv 0 == null then "" else builtins.elemAt csv 0);
+      name = networkName value;
+    in
+    if csv != null then
+      "${before}name=${rename (builtins.elemAt csv 1)}${builtins.elemAt csv 2}"
+    else
+      "${rename name}${lib.removePrefix name value}";
+
+  # Same for the network forms of `extraOptions` (`--network=x`, `--net=x`, `--network x`).
+  renameNetworkOptions =
+    rename: opts:
+    lib.imap0 (
+      i: opt:
+      let
+        m = builtins.match "(--net(work)?=)(.*)" opt;
+        previous = if i > 0 then builtins.elemAt opts (i - 1) else "";
+      in
+      if m != null then
+        "${builtins.elemAt m 0}${renameNetworkValue rename (builtins.elemAt m 2)}"
+      else if previous == "--network" || previous == "--net" then
+        renameNetworkValue rename opt
+      else
+        opt
+    ) opts;
+
+  # Rewrites the source of a `volumes` entry, keeping `:dst[:opts]`.
+  renameVolumeEntry =
+    rename: entry:
+    let
+      src = volumeSource entry;
+    in
+    "${rename src}${lib.removePrefix src entry}";
 }
