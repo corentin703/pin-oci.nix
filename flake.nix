@@ -1,7 +1,7 @@
 {
   description = "Deterministic OCI image pinning for NixOS";
 
-  inputs.nixpkgs.url = "github:nixos/nixpkgs/nixos-26.05";
+  inputs.nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
 
   outputs = { self, nixpkgs }:
     let
