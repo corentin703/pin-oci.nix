@@ -16,17 +16,27 @@ NixOS module and Rust CLI tooling for deterministic pinning of container images 
 
 ## 2. Lockfile Format (`pin-oci.lock`)
 
-Default location: root of the flake / Nix configuration (`./pin-oci.lock`).
+Location: root of the flake, next to `flake.lock` (`<flake root>/pin-oci.lock`). The module's `lockFile` option has no default and must point to it (see §4.1).
+
+### Canonical key
+
+The key of an entry is the **canonical reference** `<registry>/<repository>:<tag>`. It is generated **only on the Nix side** (`modules/containers.nix`); the Rust CLI never parses or normalizes image references, it consumes the `lockTargets` evaluated from Nix (see §4.3).
+
+Normalization rules:
+
+* no registry in the reference → `docker.io`;
+* `docker.io` with a single-segment repository → `library/` prefix;
+* no tag → `latest`;
+* a reference already carrying `@sha256:...` is considered pinned: it is passed through unchanged and has no entry in the lockfile.
 
 ```json
 {
   "version": 1,
   "images": {
-    "caddy:2-alpine": {
+    "docker.io/library/caddy:2-alpine": {
       "registry": "docker.io",
       "repository": "library/caddy",
       "tag": "2-alpine",
-      "manifest_digest": "sha256:4a3b890123...",
       "arch": {
         "x86_64-linux": {
           "digest": "sha256:d8a26e8499...",
@@ -53,6 +63,8 @@ Default location: root of the flake / Nix configuration (`./pin-oci.lock`).
 | `linux` / `arm64` | `aarch64-linux` |
 | `linux` / `arm` (v7) | `armv7l-linux` |
 | `linux` / `riscv64` | `riscv64-linux` |
+
+Index entries whose platform is `unknown/unknown` (attestation manifests) are ignored.
 
 ---
 
@@ -90,12 +102,27 @@ Default location: root of the flake / Nix configuration (`./pin-oci.lock`).
 
 ### 4.1 NixOS Interface
 
-The submodule replicates the exact options of `virtualisation.oci-containers.containers.<name>`, except for the `image` field, which receives an unresolved string (`"image:tag"`).
+The submodule replicates the exact options of `virtualisation.oci-containers.containers.<name>`. They are derived from the host configuration (`options.virtualisation.oci-containers.containers`), never imported through `<nixpkgs>` / `NIX_PATH`. The `image` field receives an unresolved string (`"image:tag"`).
+
+Consumption as a flake input; `follows` keeps the module aligned with the host's nixpkgs:
+
+```nix
+inputs = {
+  nixpkgs.url = "github:nixos/nixpkgs/nixos-26.05";
+
+  pin-oci = {
+    url = "github:cprag/pin-oci.nix";
+    inputs.nixpkgs.follows = "nixpkgs";
+  };
+};
+```
+
+`lockFile` has **no default** (a module cannot know the root of the user's flake) and is mandatory when `enable = true`. Use `./pin-oci.lock` when the configuration file sits at the flake root, otherwise `self + "/pin-oci.lock"` (`self` must be passed through `specialArgs`). In a flake, `builtins.pathExists` does not see files untracked by git: after `pin-oci lock`, run `git add pin-oci.lock`.
 
 ```nix
 virtualisation.pin-oci = {
   enable = true;
-  lockFile = ./pin-oci.lock; # optional, default: ./pin-oci.lock
+  lockFile = ./pin-oci.lock; # mandatory, no default
 
   containers.traefik = {
     image = "traefik:v3.0";
@@ -106,10 +133,10 @@ virtualisation.pin-oci = {
 
 ```
 
-### 4.2 Nix Module (`modules/pin-oci.nix`)
+### 4.2 Nix Module (`modules/containers.nix`)
 
 ```nix
-{ config, lib, pkgs, ... }:
+{ config, options, lib, pkgs, ... }:
 
 let
   cfg = config.virtualisation.pin-oci;
@@ -123,39 +150,62 @@ let
 
   currentSystem = pkgs.stdenv.hostPlatform.system;
 
-  # Strict inheritance of the oci-containers options
-  baseContainerModule = import <nixpkgs/nixos/modules/virtualisation/oci-options.nix> { inherit lib; };
+  # Options derived from the host's oci-containers, never from <nixpkgs>.
+  # Exact derivation mechanism validated at implementation time (task 1.6).
+  baseContainerModules =
+    options.virtualisation.oci-containers.containers.type.nestedTypes.elemType.getSubModules;
 
-  pinContainerModule = {
-    imports = [ baseContainerModule ];
-    options.image = lib.mkOption {
-      type = lib.types.str;
-      description = "OCI reference with a floating tag (e.g. redis:7-alpine).";
-    };
-  };
+  pinContainerModule = { imports = baseContainerModules; };
 
-  # Check for presence in the lockfile
-  isImageMissing = imageTag:
+  # Canonical reference (see §2). Only place where references are parsed.
+  parseRef = ref:
     let
-      entry = lockData.images.${imageTag} or null;
+      pinned = lib.hasInfix "@" ref;
+      noDigest = builtins.head (lib.splitString "@" ref);
+      parts = lib.splitString "/" noDigest;
+      first = builtins.head parts;
+      hasRegistry =
+        builtins.length parts > 1
+        && (lib.hasInfix "." first || lib.hasInfix ":" first || first == "localhost");
+      registry = if hasRegistry then first else "docker.io";
+      path = if hasRegistry then lib.concatStringsSep "/" (builtins.tail parts) else noDigest;
+      lastSegment = lib.last (lib.splitString "/" path);
+      hasTag = lib.hasInfix ":" lastSegment;
+      tag = if hasTag then lib.last (lib.splitString ":" lastSegment) else "latest";
+      untagged = if hasTag then lib.removeSuffix ":${tag}" path else path;
+      repository =
+        if registry == "docker.io" && !(lib.hasInfix "/" untagged)
+        then "library/${untagged}"
+        else untagged;
     in
-    entry == null || !(entry.arch ? ${currentSystem});
+    { inherit pinned registry repository tag; key = "${registry}/${repository}:${tag}"; };
 
-  missingContainers = lib.filterAttrs (_: c: isImageMissing c.image) cfg.containers;
-  missingImagesList = lib.unique (lib.mapAttrsToList (_: c: c.image) missingContainers);
-  formattedList = lib.concatMapStringsSep "\n  - " (img: img) missingImagesList;
+  unpinned = lib.filterAttrs (_: c: !(parseRef c.image).pinned) cfg.containers;
+
+  # Targets consumed by the CLI. MUST NOT depend on lockData.
+  lockTargets = lib.mapAttrs'
+    (_: c:
+      let r = parseRef c.image;
+      in lib.nameValuePair r.key { inherit (r) registry repository tag; })
+    unpinned;
+
+  isMissing = key:
+    let entry = lockData.images.${key} or null;
+    in entry == null || !(entry.arch ? ${currentSystem});
+
+  missingKeys = lib.filter isMissing (builtins.attrNames lockTargets);
+  formattedList = lib.concatMapStringsSep "\n  - " (k: k) missingKeys;
 
   # Image resolution: replace :tag with @sha256:...
   resolveContainer = _: containerCfg:
     let
-      rawImage = containerCfg.image;
-      entry = lockData.images.${rawImage};
-      digest = entry.arch.${currentSystem}.digest;
-      baseImage = builtins.head (lib.splitString ":" (builtins.head (lib.splitString "@" rawImage)));
+      r = parseRef containerCfg.image;
     in
-    containerCfg // {
-      image = "${baseImage}@${digest}";
-    };
+    if r.pinned then containerCfg
+    else
+      containerCfg // {
+        image = "${r.registry}/${r.repository}@${lockData.images.${r.key}.arch.${currentSystem}.digest}";
+      };
 
 in {
   options.virtualisation.pin-oci = {
@@ -163,8 +213,10 @@ in {
 
     lockFile = lib.mkOption {
       type = lib.types.path;
-      default = ./pin-oci.lock;
-      description = "Absolute or relative path to pin-oci.lock.";
+      description = ''
+        Path to pin-oci.lock, at the flake root next to flake.lock.
+        No default: set it to ./pin-oci.lock or (self + "/pin-oci.lock").
+      '';
     };
 
     containers = lib.mkOption {
@@ -172,49 +224,69 @@ in {
       default = { };
       description = "Container specifications (identical to oci-containers).";
     };
+
+    lockTargets = lib.mkOption {
+      type = lib.types.attrsOf lib.types.attrs;
+      readOnly = true;
+      description = "Canonical image keys to resolve, consumed by the pin-oci CLI.";
+    };
   };
 
-  config = lib.mkIf cfg.enable {
-    assertions = [
-      {
-        assertion = missingImagesList == [ ];
-        message = ''
+  config = lib.mkMerge [
+    { virtualisation.pin-oci.lockTargets = lockTargets; }
 
-          [pin-oci] Missing or unpinned images for '${currentSystem}' in ${toString lockFilePath}:
-            - ${formattedList}
+    (lib.mkIf cfg.enable {
+      assertions = [
+        {
+          assertion = missingKeys == [ ];
+          message = ''
 
-          Synchronize the lock file with the command:
-            pin-oci lock
-        '';
-      }
-    ];
+            [pin-oci] Missing or unpinned images for '${currentSystem}' in ${toString lockFilePath}:
+              - ${formattedList}
 
-    virtualisation.oci-containers.containers =
-      if missingImagesList == [ ] then
-        lib.mapAttrs resolveContainer cfg.containers
-      else
-        { };
-  };
+            Synchronize the lock file with the command:
+              pin-oci lock
+            then make it visible to the flake:
+              git add pin-oci.lock
+          '';
+        }
+      ];
+
+      virtualisation.oci-containers.containers =
+        if missingKeys == [ ] then
+          lib.mapAttrs resolveContainer cfg.containers
+        else
+          { };
+    })
+  ];
 }
 
 ```
 
+**Laziness guarantee.** Assertions are only forced by `system.build.toplevel`. `lockTargets` does not depend on `lockData`, so `nix eval ...lockTargets` succeeds with a missing lockfile, while `nixos-rebuild` fails with the message above.
+
 ### 4.3 Rust CLI Specification (`pin-oci`)
+
+The CLI never parses image references and holds no registry client or credentials: it asks Nix for the canonical targets and delegates registry access and authentication to the backend selected by `virtualisation.oci-containers.backend` (`docker` or `podman`), using the host's own credentials and credential helpers.
 
 #### Commands:
 
 * `pin-oci lock [--flake <ref>] [--file <path>]`:
-1. Evaluates the configuration without building:
+1. Evaluates the configuration without building, retrieving the backend and the targets in a single evaluation:
 ```bash
-nix eval --json <ref>.config.virtualisation.pin-oci.containers --apply 'builtins.mapAttrs (_: c: c.image)'
+nix eval --json <ref>#nixosConfigurations.<host>.config \
+  --apply 'c: { backend = c.virtualisation.oci-containers.backend; targets = c.virtualisation.pin-oci.lockTargets; }'
 
 ```
 
 
-2. Parses the image references (splitting registry, repository, tag).
-3. Performs OCI v2 Registry requests (`GET /v2/<name>/manifests/<tag>`) with accept headers for `image.index.v1` and `manifest.list.v2`.
-4. Extracts the individual per-platform digests (`amd64`, `arm64`, etc.).
-5. Writes deterministically sorted JSON (`BTreeMap`) to the target file.
+2. For each target, runs `<backend> manifest inspect <registry>/<repository>:<tag>` (behind a `Runtime` trait so tests use fixtures).
+3. Reads `manifests[].platform.{os,architecture,variant}` and `manifests[].digest`, ignores `unknown/unknown` entries, and maps platforms through the table of §2.
+4. Writes deterministically sorted JSON (`BTreeMap`) to the target file.
+
+`--file` defaults to `<flake root>/pin-oci.lock` for a local flake reference; it is mandatory for a remote reference. The CLI must run where the backend binary is installed and authenticated.
+
+> **OPEN POINT (not settled):** `manifest inspect` on an image that is not an index returns a single manifest without `platform` (verified with `docker` 29.8.1: the architecture only lives in the config blob). Handling of single-platform images is to be decided before task 1.3. `podman` output is not yet verified.
 
 
 * `pin-oci check [--flake <ref>]`:
@@ -289,7 +361,7 @@ Syntactic sugar structuring sets of interdependent containers within a shared na
 ```nix
 virtualisation.pin-oci.projects.monitoring = {
   enable = true;
-  defaultNetwork.enable = true; # Automatically creates the 'monitoring-default' network
+  networks.default.enable = true; # Creates 'monitoring-default', attached to every service
 
   services = {
     prometheus = {
@@ -308,30 +380,33 @@ virtualisation.pin-oci.projects.monitoring = {
 
   volumes.prom_data = { };
   volumes.grafana_data = { };
+  # volumes.shared_data.external = true;  # global resource, no prefix
 };
 
 ```
 
 ### 6.2 Compilation Rules to Milestones 1 & 2
 
-1. **Name prefixing:**
+1. **Name prefixing and `external`:**
 * Standardized container: `<project>-<service>` (e.g. `monitoring-grafana`).
-* Standardized volume: `<project>_<volume>` (e.g. `monitoring_grafana_data`).
+* Project `volumes.<v>` and `networks.<n>` carry an `external` flag (default `false`).
+* `external = false`: the resource is prefixed with the project (volume `<project>_<volume>`, e.g. `monitoring_grafana_data`; network `<project>-<network>`) and its init unit is generated. Volume references in the project's services (`grafana_data:/var/lib/grafana`) are rewritten to the prefixed name.
+* `external = true`: no prefix, no unit generated; an assertion requires the resource to exist in the global `virtualisation.pin-oci.{networks,volumes}`.
 
 
 2. **Local DNS resolution:**
-The implicit `<project>-default` network connects all services of the project. Podman/Docker handles internal DNS resolution via the service name (`prometheus`).
+`networks.default.enable = true` creates the `<project>-default` network (never external) and attaches it to all services of the project. Podman/Docker handles internal DNS resolution via the service name (`prometheus`).
 3. **`dependsOn` translation:**
 Injection of systemd dependencies on the target container:
 ```nix
 after = [ "${backend}-${project}-${depService}.service" ];
-wants = [ "${backend}-${project}-${depService}.service" ];
+requires = [ "${backend}-${project}-${depService}.service" ];
 
 ```
 
 
 4. **Feeding the CLI:**
-The `pin-oci lock` command recursively aggregates the images from `config.virtualisation.pin-oci.containers` and from all `config.virtualisation.pin-oci.projects.*.services`.
+`virtualisation.pin-oci.lockTargets` aggregates the images from `config.virtualisation.pin-oci.containers` and from all `config.virtualisation.pin-oci.projects.*.services`; `pin-oci lock` consumes that single option.
 
 ---
 
@@ -343,15 +418,16 @@ pin-oci.nix/
 ├── Cargo.toml
 ├── src/
 │   ├── main.rs         # CLI entry point, clap subcommands
-│   ├── nix.rs          # nix eval invocation, target parsing
-│   ├── registry.rs     # OCI v2 client, manifest negotiation
+│   ├── nix.rs          # nix eval invocation, lockTargets + backend parsing
+│   ├── registry.rs     # Runtime trait: `<backend> manifest inspect`, platform extraction
 │   └── lockfile.rs     # BTreeMap model, JSON serialization
+├── tests/              # integration / e2e (fixtures, stubbed runtime)
 ├── modules/
 │   ├── default.nix     # Entry point aggregating the modules
 │   ├── containers.nix  # Milestone 1: pin-oci engine + assertion
 │   ├── infra.nix       # Milestone 2: systemd networks and volumes
 │   └── projects.nix    # Milestone 3: Compose lowering to infra + containers
-├── flake.nix
+├── flake.nix           # inputs.nixpkgs, nixosModules.default, packages.pin-oci
 └── README.md
 
 ```
