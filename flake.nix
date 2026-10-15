@@ -17,6 +17,11 @@
           version = "0.1.0";
           src = ./.;
           cargoLock.lockFile = ./Cargo.lock;
+          nativeBuildInputs = [ pkgs.makeWrapper ];
+          # Runtime dependency: registry access goes through skopeo.
+          postInstall = ''
+            wrapProgram $out/bin/pin-oci --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.skopeo ]}
+          '';
           meta.mainProgram = "pin-oci";
         };
         default = pin-oci;
@@ -24,7 +29,7 @@
 
       devShells = forAllSystems (pkgs: {
         default = pkgs.mkShell {
-          packages = [ pkgs.cargo pkgs.rustc pkgs.clippy ];
+          packages = [ pkgs.cargo pkgs.rustc pkgs.clippy pkgs.skopeo ];
         };
       });
 

@@ -1,0 +1,46 @@
+{
+  "schemaVersion": 2,
+  "mediaType": "application/vnd.oci.image.manifest.v1+json",
+  "config": {
+    "mediaType": "application/vnd.oci.image.config.v1+json",
+    "digest": "sha256:f77f856a30f0004200b36b322d61da17fade31e24875699d77fb968399b9eb77",
+    "size": 6961
+  },
+  "layers": [
+    {
+      "mediaType": "application/vnd.oci.image.layer.v1.tar+gzip",
+      "digest": "sha256:d0c1d894c237d8192cbcd37e435031ad4eddec173299568a5a05869c2e40dfa3",
+      "size": 3848507
+    },
+    {
+      "mediaType": "application/vnd.oci.image.layer.v1.tar+gzip",
+      "digest": "sha256:c556e15ef95ecd401bdb0f857408b15673caeae3cd8cb9dd41017302ae906af5",
+      "size": 2784585
+    },
+    {
+      "mediaType": "application/vnd.oci.image.layer.v1.tar+gzip",
+      "digest": "sha256:c36f8763f5d03e6f21be82e5ca5027359049d3e75c20fc875c6781150882193e",
+      "size": 7497
+    },
+    {
+      "mediaType": "application/vnd.oci.image.layer.v1.tar+gzip",
+      "digest": "sha256:eed965aa3fb17721d598fd2368bc2b66d35e7951cb042b9cf26af61a93585dfd",
+      "size": 18227348
+    },
+    {
+      "mediaType": "application/vnd.oci.image.layer.v1.tar+gzip",
+      "digest": "sha256:4f4fb700ef54461cfa02571ae0db9a0dc1e0cdb5577484a6d75e68dc38e8acc1",
+      "size": 32
+    }
+  ],
+  "annotations": {
+    "com.docker.official-images.bashbrew.arch": "amd64",
+    "org.opencontainers.image.base.digest": "sha256:1f3591b8a02ea153f41c5bba878ad477f63ab3d19349762cb77504db02a23e15",
+    "org.opencontainers.image.base.name": "alpine:3.23",
+    "org.opencontainers.image.created": "2026-10-05T18:46:27Z",
+    "org.opencontainers.image.revision": "9234f5785658cae8129bfae366e196d0670468ac",
+    "org.opencontainers.image.source": "https://github.com/caddyserver/caddy-docker.git#9234f5785658cae8129bfae366e196d0670468ac:2.11/alpine",
+    "org.opencontainers.image.url": "https://hub.docker.com/_/caddy",
+    "org.opencontainers.image.version": "2.11.7-alpine"
+  }
+}

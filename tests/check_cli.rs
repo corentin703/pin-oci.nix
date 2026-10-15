@@ -62,9 +62,12 @@ impl Fixture {
 }
 
 fn declared(targets: &[&str]) -> String {
-    let list: Vec<String> = targets.iter().map(|t| format!("\"{t}\"")).collect();
+    let list: Vec<String> = targets
+        .iter()
+        .map(|t| format!(r#""{t}":{{"registry":"r","repository":"p","tag":"t"}}"#))
+        .collect();
     format!(
-        r#"{{"system":"x86_64-linux","targets":[{}]}}"#,
+        r#"{{"system":"x86_64-linux","targets":{{{}}}}}"#,
         list.join(",")
     )
 }

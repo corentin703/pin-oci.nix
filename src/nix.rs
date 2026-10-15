@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::fmt;
 use std::io;
 use std::path::PathBuf;
@@ -6,13 +7,21 @@ use std::process::Command;
 use serde::Deserialize;
 
 /// Evaluated on `nixosConfigurations.<host>.config`. Never depends on the lockfile.
-const CHECK_APPLY: &str = "c: { system = c.nixpkgs.hostPlatform.system; \
-                           targets = builtins.attrNames c.virtualisation.pin-oci.lockTargets; }";
+const APPLY: &str = "c: { system = c.nixpkgs.hostPlatform.system; \
+                     targets = c.virtualisation.pin-oci.lockTargets; }";
 
 #[derive(Debug, PartialEq, Eq, Deserialize)]
 pub(crate) struct Declared {
     pub(crate) system: String,
-    pub(crate) targets: Vec<String>,
+    /// Canonical key -> target.
+    pub(crate) targets: BTreeMap<String, Target>,
+}
+
+#[derive(Debug, PartialEq, Eq, Deserialize)]
+pub(crate) struct Target {
+    pub(crate) registry: String,
+    pub(crate) repository: String,
+    pub(crate) tag: String,
 }
 
 #[derive(Debug)]
@@ -85,7 +94,7 @@ pub(crate) fn flake_root(flake: &str) -> Option<PathBuf> {
 }
 
 pub(crate) fn declared(evaluator: &dyn Evaluator, flake: &str) -> Result<Declared, NixError> {
-    let json = evaluator.eval_json(&installable(flake)?, CHECK_APPLY)?;
+    let json = evaluator.eval_json(&installable(flake)?, APPLY)?;
     serde_json::from_str(&json).map_err(NixError::Parse)
 }
 
@@ -130,13 +139,18 @@ mod tests {
 
     #[test]
     fn declared_parses_evaluation_output_and_queries_lock_targets() {
-        let stub = StubEvaluator::ok(r#"{"system":"x86_64-linux","targets":["a:1","b:2"]}"#);
+        let stub = StubEvaluator::ok(
+            r#"{"system":"x86_64-linux","targets":{"docker.io/library/a:1":
+                {"registry":"docker.io","repository":"library/a","tag":"1"}}}"#,
+        );
         let got = declared(&stub, ".#box").unwrap();
+        assert_eq!(got.system, "x86_64-linux");
         assert_eq!(
-            got,
-            Declared {
-                system: "x86_64-linux".into(),
-                targets: vec!["a:1".into(), "b:2".into()]
+            got.targets["docker.io/library/a:1"],
+            Target {
+                registry: "docker.io".into(),
+                repository: "library/a".into(),
+                tag: "1".into()
             }
         );
         let calls = stub.calls.borrow();
@@ -149,7 +163,9 @@ mod tests {
         for bad in [
             "not json",
             r#"{"system":"x"}"#,
-            r#"{"system":1,"targets":[]}"#,
+            r#"{"system":1,"targets":{}}"#,
+            r#"{"system":"x","targets":["a:1"]}"#,
+            r#"{"system":"x","targets":{"a:1":{"registry":"r"}}}"#,
         ] {
             let stub = StubEvaluator::ok(bad);
             assert!(

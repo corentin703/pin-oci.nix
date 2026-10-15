@@ -1,0 +1,64 @@
+{
+    "Name": "docker.io/library/caddy",
+    "Digest": "sha256:173b26306d711395accaeba8b67afcaad2a085ccb1e6bf26010bfe8c095a5229",
+    "RepoTags": [],
+    "Created": "2026-10-05T18:46:32.580264212Z",
+    "DockerVersion": "",
+    "Labels": {
+        "org.opencontainers.image.description": "a powerful, enterprise-ready, open source web server with automatic HTTPS written in Go",
+        "org.opencontainers.image.documentation": "https://caddyserver.com/docs",
+        "org.opencontainers.image.licenses": "Apache-2.0",
+        "org.opencontainers.image.source": "https://github.com/caddyserver/caddy-docker",
+        "org.opencontainers.image.title": "Caddy",
+        "org.opencontainers.image.url": "https://caddyserver.com",
+        "org.opencontainers.image.vendor": "Light Code Labs",
+        "org.opencontainers.image.version": "v2.11.7"
+    },
+    "Architecture": "amd64",
+    "Os": "linux",
+    "Layers": [
+        "sha256:d0c1d894c237d8192cbcd37e435031ad4eddec173299568a5a05869c2e40dfa3",
+        "sha256:c556e15ef95ecd401bdb0f857408b15673caeae3cd8cb9dd41017302ae906af5",
+        "sha256:c36f8763f5d03e6f21be82e5ca5027359049d3e75c20fc875c6781150882193e",
+        "sha256:eed965aa3fb17721d598fd2368bc2b66d35e7951cb042b9cf26af61a93585dfd",
+        "sha256:4f4fb700ef54461cfa02571ae0db9a0dc1e0cdb5577484a6d75e68dc38e8acc1"
+    ],
+    "LayersData": [
+        {
+            "MIMEType": "application/vnd.oci.image.layer.v1.tar+gzip",
+            "Digest": "sha256:d0c1d894c237d8192cbcd37e435031ad4eddec173299568a5a05869c2e40dfa3",
+            "Size": 3848507,
+            "Annotations": null
+        },
+        {
+            "MIMEType": "application/vnd.oci.image.layer.v1.tar+gzip",
+            "Digest": "sha256:c556e15ef95ecd401bdb0f857408b15673caeae3cd8cb9dd41017302ae906af5",
+            "Size": 2784585,
+            "Annotations": null
+        },
+        {
+            "MIMEType": "application/vnd.oci.image.layer.v1.tar+gzip",
+            "Digest": "sha256:c36f8763f5d03e6f21be82e5ca5027359049d3e75c20fc875c6781150882193e",
+            "Size": 7497,
+            "Annotations": null
+        },
+        {
+            "MIMEType": "application/vnd.oci.image.layer.v1.tar+gzip",
+            "Digest": "sha256:eed965aa3fb17721d598fd2368bc2b66d35e7951cb042b9cf26af61a93585dfd",
+            "Size": 18227348,
+            "Annotations": null
+        },
+        {
+            "MIMEType": "application/vnd.oci.image.layer.v1.tar+gzip",
+            "Digest": "sha256:4f4fb700ef54461cfa02571ae0db9a0dc1e0cdb5577484a6d75e68dc38e8acc1",
+            "Size": 32,
+            "Annotations": null
+        }
+    ],
+    "Env": [
+        "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+        "CADDY_VERSION=v2.11.7",
+        "XDG_CONFIG_HOME=/config",
+        "XDG_DATA_HOME=/data"
+    ]
+}

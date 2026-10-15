@@ -1,6 +1,8 @@
 mod check;
+mod lock;
 mod lockfile;
 mod nix;
+mod registry;
 #[cfg(test)]
 mod testutil;
 
@@ -41,11 +43,21 @@ enum Command {
 /// Exit codes: 0 = in sync, 1 = out of sync, 2 = error.
 fn main() -> ExitCode {
     match Cli::parse().command {
-        Command::Lock { .. } => {
-            eprintln!("pin-oci lock: not implemented");
+        Command::Lock { flake, file } => run_lock(&flake, file.as_deref()),
+        Command::Check { flake, file } => run_check(&flake, file.as_deref()),
+    }
+}
+
+fn run_lock(flake: &str, file: Option<&Path>) -> ExitCode {
+    match lock::lock(&nix::NixCli, &registry::SkopeoCli, flake, file) {
+        Ok(outcome) => {
+            println!("{}", outcome.message());
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("pin-oci: error: {e}");
             ExitCode::from(2)
         }
-        Command::Check { flake, file } => run_check(&flake, file.as_deref()),
     }
 }
 

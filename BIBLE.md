@@ -267,30 +267,36 @@ in {
 
 ### 4.3 Rust CLI Specification (`pin-oci`)
 
-The CLI never parses image references and holds no registry client or credentials: it asks Nix for the canonical targets and delegates registry access and authentication to the backend selected by `virtualisation.oci-containers.backend` (`docker` or `podman`), using the host's own credentials and credential helpers.
+The CLI never parses image references and holds no registry client or credentials: it asks Nix for the canonical targets and delegates registry access and authentication to `skopeo`, using the host's own credentials and credential helpers.
 
 #### Commands:
 
 * `pin-oci lock [--flake <ref>] [--file <path>]`:
-1. Evaluates the configuration without building, retrieving the backend and the targets in a single evaluation:
+1. Evaluates the configuration without building, retrieving the host system and the targets in a single evaluation:
 ```bash
-nix eval --json <ref>#nixosConfigurations.<host>.config \
-  --apply 'c: { backend = c.virtualisation.oci-containers.backend; targets = c.virtualisation.pin-oci.lockTargets; }'
+nix eval --json <flake>#nixosConfigurations."<host>".config \
+  --apply 'c: { system = c.nixpkgs.hostPlatform.system; targets = c.virtualisation.pin-oci.lockTargets; }'
 
 ```
 
 
-2. For each target, runs `<backend> manifest inspect <registry>/<repository>:<tag>` (behind a `Runtime` trait so tests use fixtures).
-3. Reads `manifests[].platform.{os,architecture,variant}` and `manifests[].digest`, ignores `unknown/unknown` entries, and maps platforms through the table of §2.
-4. Writes deterministically sorted JSON (`BTreeMap`) to the target file.
+2. Resolves only the targets missing from the lockfile (absent key, or no entry for the host system); existing entries are never re-resolved.
+3. For each, runs `skopeo inspect --raw docker://<registry>/<repository>:<tag>`:
+   * **index** (`manifests[]`): takes each entry's `digest` and `platform.{os,architecture,variant}`, maps platforms through the table of §2 and ignores unmappable entries (`unknown/unknown` attestations, `s390x`, `arm` v6...);
+   * **single manifest** (no `manifests`): runs `skopeo inspect --no-tags` and reads `Digest`, `Os`, `Architecture`, `Variant`; an unmappable platform is an error.
+4. Fails if an image has no manifest for the host system, or if two manifests map to the same system.
+5. Prunes lockfile entries absent from `lockTargets`.
+6. Writes deterministic JSON (`BTreeMap` order, fixed field order, 2-space indent, final newline), atomically (temporary file then rename), and leaves the file untouched when the content is unchanged.
 
-`--file` defaults to `<flake root>/pin-oci.lock` for a local flake reference; it is mandatory for a remote reference. The CLI must run where the backend binary is installed and authenticated.
+**All or nothing:** if any image fails to resolve, every failure is reported, nothing is written and the exit code is 2.
 
-> **OPEN POINT (not settled):** `manifest inspect` on an image that is not an index returns a single manifest without `platform` (verified with `docker` 29.8.1: the architecture only lives in the config blob). Handling of single-platform images is to be decided before task 1.3. `podman` output is not yet verified.
+`--file` defaults to `<flake root>/pin-oci.lock` for a local flake reference; it is mandatory for a remote reference.
+
+**Registry access and authentication** are delegated to `skopeo` (runtime dependency, wrapped into the `pin-oci` package and provided by the dev shells), which reads the host's own credentials (`REGISTRY_AUTH_FILE`, `${XDG_RUNTIME_DIR}/containers/auth.json`, `~/.docker/config.json`) and credential helpers. The CLI embeds no HTTP client and no credential handling, and does not depend on `virtualisation.oci-containers.backend`.
 
 
 * `pin-oci check [--flake <ref>] [--file <path>]`:
-Checks that every key of `lockTargets` has an entry for the host platform in the lockfile, without modifying any file. It evaluates `{ system = config.nixpkgs.hostPlatform.system; targets = attrNames config.virtualisation.pin-oci.lockTargets; }`, never the lockfile. Lockfile entries absent from `lockTargets` are ignored (only `lock` prunes them); a missing lockfile counts as empty.
+Checks that every key of `lockTargets` has an entry for the host platform in the lockfile, without modifying any file. It evaluates the same `{ system; targets }` as `lock` (only the target keys are used), never the lockfile. Lockfile entries absent from `lockTargets` are ignored (only `lock` prunes them); a missing lockfile counts as empty.
 Exit codes: 0 = in sync, 1 = out of sync, 2 = error (nix failure, unreadable or invalid lockfile, remote flake without `--file`). Suited for CI steps.
 
 `--flake` takes `<flake>#<host>` and targets `nixosConfigurations."<host>".config`; a reference without `#<host>` is an error.
@@ -422,10 +428,11 @@ pin-oci.nix/
 ├── src/
 │   ├── main.rs         # CLI entry point, clap subcommands
 │   ├── check.rs        # `check` command: targets vs lockfile
-│   ├── nix.rs          # nix eval invocation, lockTargets + backend parsing
-│   ├── registry.rs     # Runtime trait: `<backend> manifest inspect`, platform extraction
+│   ├── nix.rs          # nix eval invocation, system + lockTargets parsing
+│   ├── lock.rs         # `lock` command: resolve missing, prune, write
+│   ├── registry.rs     # Runtime trait around skopeo, index / single-manifest resolution
 │   └── lockfile.rs     # BTreeMap model, JSON serialization
-├── tests/              # integration / e2e (fixtures, stubbed runtime)
+├── tests/              # e2e (fake nix / skopeo on PATH), fixtures/ = captured skopeo outputs
 ├── modules/
 │   ├── default.nix     # Entry point aggregating the modules
 │   ├── containers.nix  # Milestone 1: pin-oci engine + assertion

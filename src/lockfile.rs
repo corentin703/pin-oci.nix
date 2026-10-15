@@ -16,19 +16,63 @@ pub(crate) struct Lockfile {
 
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Image {
+pub(crate) struct Image {
     registry: String,
     repository: String,
     tag: String,
     arch: BTreeMap<String, Platform>,
 }
 
+impl Image {
+    pub(crate) fn new(
+        registry: String,
+        repository: String,
+        tag: String,
+        arch: BTreeMap<String, Platform>,
+    ) -> Self {
+        Self {
+            registry,
+            repository,
+            tag,
+            arch,
+        }
+    }
+
+    pub(crate) fn has_system(&self, system: &str) -> bool {
+        self.arch.contains_key(system)
+    }
+}
+
+#[cfg(test)]
+impl Image {
+    pub(crate) fn systems(&self) -> Vec<&str> {
+        self.arch.keys().map(String::as_str).collect()
+    }
+
+    /// `(digest, os, architecture)` of a system.
+    pub(crate) fn platform(&self, system: &str) -> Option<(&str, &str, &str)> {
+        self.arch
+            .get(system)
+            .map(|p| (p.digest.as_str(), p.os.as_str(), p.architecture.as_str()))
+    }
+}
+
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Platform {
+pub(crate) struct Platform {
     digest: String,
     os: String,
     architecture: String,
+}
+
+impl Platform {
+    pub(crate) fn new(digest: String, os: String, architecture: String) -> Self {
+        Self {
+            digest,
+            os,
+            architecture,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -49,7 +93,7 @@ pub(crate) enum LockfileError {
 impl fmt::Display for LockfileError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Io { path, source } => write!(f, "cannot read {}: {source}", path.display()),
+            Self::Io { path, source } => write!(f, "cannot access {}: {source}", path.display()),
             Self::Parse(e) => write!(f, "invalid lockfile: {e}"),
             Self::UnsupportedVersion(v) => {
                 write!(
@@ -124,9 +168,73 @@ impl Lockfile {
             .map(str::to_owned)
             .collect()
     }
+
+    pub(crate) fn insert(&mut self, key: String, image: Image) {
+        self.images.insert(key, image);
+    }
+
+    /// Drops entries for which `keep` is false; returns the dropped keys.
+    pub(crate) fn prune(&mut self, keep: impl Fn(&str) -> bool) -> Vec<String> {
+        let dropped: Vec<String> = self
+            .images
+            .keys()
+            .filter(|key| !keep(key))
+            .cloned()
+            .collect();
+        for key in &dropped {
+            self.images.remove(key);
+        }
+        dropped
+    }
+
+    /// Deterministic output: sorted keys, fixed field order, 2-space indent, final newline.
+    pub(crate) fn to_json(&self) -> String {
+        let mut json = serde_json::to_string_pretty(self).expect("lockfile is serializable");
+        json.push('\n');
+        json
+    }
+
+    /// Atomic write (temporary file + rename), skipped when the content is unchanged.
+    /// Returns whether the file was written.
+    pub(crate) fn write(&self, path: &Path) -> Result<bool, LockfileError> {
+        let json = self.to_json();
+        if std::fs::read_to_string(path).is_ok_and(|current| current == json) {
+            return Ok(false);
+        }
+        let io_err = |source| LockfileError::Io {
+            path: path.to_path_buf(),
+            source,
+        };
+        let name = path.file_name().unwrap_or_default().to_string_lossy();
+        let tmp = path.with_file_name(format!(".{name}.tmp"));
+        std::fs::write(&tmp, &json).map_err(io_err)?;
+        if let Err(e) = std::fs::rename(&tmp, path) {
+            let _ = std::fs::remove_file(&tmp);
+            return Err(io_err(e));
+        }
+        Ok(true)
+    }
 }
 
-fn is_valid_digest(digest: &str) -> bool {
+/// Nix system for an OCI platform (table of BIBLE §2). Linux only; unlisted platforms map to `None`.
+pub(crate) fn nix_system(
+    os: &str,
+    architecture: &str,
+    variant: Option<&str>,
+) -> Option<&'static str> {
+    if os != "linux" {
+        return None;
+    }
+    match (architecture, variant) {
+        ("amd64", _) => Some("x86_64-linux"),
+        ("arm64", None | Some("v8")) => Some("aarch64-linux"),
+        ("arm", Some("v7")) => Some("armv7l-linux"),
+        ("riscv64", _) => Some("riscv64-linux"),
+        _ => None,
+    }
+}
+
+pub(crate) fn is_valid_digest(digest: &str) -> bool {
     digest.strip_prefix("sha256:").is_some_and(|hex| {
         hex.len() == 64 && hex.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
     })
@@ -240,5 +348,131 @@ mod tests {
             Lockfile::empty().missing(["a:1"], "x86_64-linux"),
             vec!["a:1"]
         );
+    }
+
+    fn image(tag: &str, systems: &[&str]) -> Image {
+        let arch = systems
+            .iter()
+            .map(|s| {
+                (
+                    s.to_string(),
+                    Platform::new(format!("sha256:{HEX}"), "linux".into(), "amd64".into()),
+                )
+            })
+            .collect();
+        Image::new("docker.io".into(), "library/x".into(), tag.into(), arch)
+    }
+
+    #[test]
+    fn nix_system_follows_the_platform_table() {
+        for (os, arch, variant, expected) in [
+            ("linux", "amd64", None, Some("x86_64-linux")),
+            ("linux", "arm64", None, Some("aarch64-linux")),
+            ("linux", "arm64", Some("v8"), Some("aarch64-linux")),
+            ("linux", "arm", Some("v7"), Some("armv7l-linux")),
+            ("linux", "riscv64", None, Some("riscv64-linux")),
+            ("linux", "arm", Some("v6"), None),
+            ("linux", "arm", Some("v5"), None),
+            ("linux", "arm", None, None),
+            ("linux", "arm64", Some("v9"), None),
+            ("linux", "ppc64le", None, None),
+            ("linux", "s390x", None, None),
+            ("windows", "amd64", None, None),
+            ("unknown", "unknown", None, None),
+        ] {
+            assert_eq!(
+                nix_system(os, arch, variant),
+                expected,
+                "{os}/{arch}/{variant:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn serialization_is_deterministic_and_independent_of_insertion_order() {
+        let build = |order: &[&str]| {
+            let mut lock = Lockfile::empty();
+            for key in order {
+                lock.insert(
+                    (*key).to_owned(),
+                    image(key, &["x86_64-linux", "aarch64-linux"]),
+                );
+            }
+            lock.to_json()
+        };
+        let a = build(&["b:1", "a:1", "c:1"]);
+        assert_eq!(a, build(&["c:1", "b:1", "a:1"]));
+        assert_eq!(a, build(&["b:1", "a:1", "c:1"]));
+        assert!(a.ends_with("}\n"));
+        let (pa, pb) = (a.find("\"a:1\"").unwrap(), a.find("\"b:1\"").unwrap());
+        assert!(pa < pb);
+        assert!(a.find("aarch64-linux").unwrap() < a.find("x86_64-linux").unwrap());
+    }
+
+    #[test]
+    fn serialization_matches_the_documented_field_order_and_reparses() {
+        let mut lock = Lockfile::empty();
+        lock.insert("k:1".into(), image("1", &["x86_64-linux"]));
+        let json = lock.to_json();
+        let positions: Vec<usize> = [
+            "version",
+            "images",
+            "registry",
+            "repository",
+            "tag",
+            "arch",
+            "digest",
+            "os",
+            "architecture",
+        ]
+        .iter()
+        .map(|f| json.find(&format!("\"{f}\"")).unwrap())
+        .collect();
+        assert!(positions.windows(2).all(|w| w[0] < w[1]), "{json}");
+        assert_eq!(Lockfile::parse(&json).unwrap(), lock);
+    }
+
+    #[test]
+    fn prune_drops_only_entries_rejected_by_the_predicate() {
+        let mut lock = Lockfile::empty();
+        lock.insert("keep:1".into(), image("1", &["x86_64-linux"]));
+        lock.insert("stale:1".into(), image("1", &["x86_64-linux"]));
+        assert_eq!(lock.prune(|k| k == "keep:1"), vec!["stale:1"]);
+        assert!(lock.missing(["keep:1"], "x86_64-linux").is_empty());
+        assert_eq!(lock.missing(["stale:1"], "x86_64-linux"), vec!["stale:1"]);
+    }
+
+    #[test]
+    fn write_is_atomic_idempotent_and_leaves_no_temporary_file() {
+        let dir = temp_dir("lockfile-write");
+        let path = dir.join("pin-oci.lock");
+        let mut lock = Lockfile::empty();
+        lock.insert("k:1".into(), image("1", &["x86_64-linux"]));
+
+        assert!(lock.write(&path).unwrap());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), lock.to_json());
+        assert!(
+            !lock.write(&path).unwrap(),
+            "identical content is not rewritten"
+        );
+        let names: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        assert_eq!(names, vec![std::ffi::OsString::from("pin-oci.lock")]);
+    }
+
+    #[test]
+    fn write_failure_leaves_the_existing_file_untouched() {
+        let dir = temp_dir("lockfile-write-fail");
+        let path = dir.join("pin-oci.lock");
+        std::fs::write(&path, "previous").unwrap();
+        // The temporary file name is taken by a directory: the write must fail.
+        std::fs::create_dir(dir.join(".pin-oci.lock.tmp")).unwrap();
+
+        let mut lock = Lockfile::empty();
+        lock.insert("k:1".into(), image("1", &["x86_64-linux"]));
+        assert!(matches!(lock.write(&path), Err(LockfileError::Io { .. })));
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "previous");
     }
 }

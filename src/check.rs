@@ -72,7 +72,7 @@ pub(crate) fn check(
     let declared = nix::declared(evaluator, flake).map_err(CheckError::Nix)?;
     let lock = Lockfile::read(&file).map_err(CheckError::Lockfile)?;
     let missing = lock.missing(
-        declared.targets.iter().map(String::as_str),
+        declared.targets.keys().map(String::as_str),
         &declared.system,
     );
     Ok(Report {
@@ -99,9 +99,12 @@ mod tests {
     }
 
     fn declared_json(targets: &[&str]) -> String {
-        let list: Vec<String> = targets.iter().map(|t| format!("\"{t}\"")).collect();
+        let list: Vec<String> = targets
+            .iter()
+            .map(|t| format!(r#""{t}":{{"registry":"r","repository":"p","tag":"t"}}"#))
+            .collect();
         format!(
-            r#"{{"system":"x86_64-linux","targets":[{}]}}"#,
+            r#"{{"system":"x86_64-linux","targets":{{{}}}}}"#,
             list.join(",")
         )
     }
