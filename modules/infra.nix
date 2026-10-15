@@ -67,6 +67,57 @@ let
     })
   ) cfg.volumes;
 
+  # Name of the resource a `--network` value designates (`app-net:alias=db` -> `app-net`).
+  nameOf = value: builtins.head (lib.splitString ":" value);
+
+  # Networks from `--network=x`, `--net=x` and the two-element form `--network x`.
+  networksFromExtraOptions =
+    opts:
+    lib.concatLists (
+      lib.imap0 (
+        i: opt:
+        let
+          m = builtins.match "--net(work)?=(.*)" opt;
+        in
+        if m != null then
+          [ (nameOf (builtins.elemAt m 1)) ]
+        else if (opt == "--network" || opt == "--net") && i + 1 < builtins.length opts then
+          [ (nameOf (builtins.elemAt opts (i + 1))) ]
+        else
+          [ ]
+      ) opts
+    );
+
+  # Source of each `volumes = [ "src:dst[:opts]" ]` entry. Bind mounts (/, ., ~) never match a
+  # declared volume: names cannot start with those characters.
+  volumeSources = volumes: map nameOf volumes;
+
+  # Declared resources a container references, as unit names.
+  dependenciesOf =
+    c:
+    lib.unique (
+      map (n: "${networkUnit n}.service") (
+        lib.filter (n: cfg.networks ? ${n}) (map nameOf c.networks ++ networksFromExtraOptions c.extraOptions)
+      )
+      ++ map (n: "${volumeUnit n}.service") (lib.filter (n: cfg.volumes ? ${n}) (volumeSources c.volumes))
+    );
+
+  # Only containers that were actually lowered to oci-containers have a unit.
+  lowered = lib.filterAttrs (n: _: config.virtualisation.oci-containers.containers ? ${n}) cfg.containers;
+
+  containerOrdering = lib.mapAttrs' (
+    _: c:
+    let
+      deps = dependenciesOf c;
+    in
+    lib.nameValuePair c.serviceName (
+      lib.mkIf (deps != [ ]) {
+        after = deps;
+        requires = deps;
+      }
+    )
+  ) lowered;
+
   invalidNames = lib.filter (n: !validName n) (
     builtins.attrNames cfg.networks ++ builtins.attrNames cfg.volumes
   );
@@ -121,6 +172,10 @@ in
       }
     ];
 
-    systemd.services = networkUnits // volumeUnits;
+    systemd.services = lib.mkMerge [
+      networkUnits
+      volumeUnits
+      containerOrdering
+    ];
   };
 }

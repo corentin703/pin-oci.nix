@@ -413,7 +413,7 @@ requires = [ "${backend}-network-app-net.service" "${backend}-volume-postgres_da
 
 A container references:
   * a network through the `networks` option, `extraOptions = [ "--network=<n>" ]`, `"--net=<n>"`, or the two-element form `[ "--network" "<n>" ]` (anything after a `:` in the value, such as `:alias=db`, is ignored);
-  * a volume through `volumes = [ "<name>:<path>[:opts]" ]` when the source is a name, that is not starting with `/`, `.` or `~`.
+  * a volume through the source of `volumes = [ "<name>:<path>[:opts]" ]`; bind mounts (`/…`, `./…`, `~/…`) never match since names cannot start with those characters.
 
 Only names declared in `virtualisation.pin-oci.networks` / `volumes` produce a dependency; any other name (`host`, a pre-existing volume, a bind mount) is left alone. Nothing is added to a container that was not lowered (unlocked image).
 

@@ -33,6 +33,31 @@ let
   volUnit = unit infra "podman-volume-postgres_data";
 
   has = needle: hay: lib.hasInfix needle hay;
+
+  resourceUnits =
+    units: lib.sort lib.lessThan (lib.filter (u: has "-network-" u || has "-volume-" u) units);
+
+  # A locked container (caddy:2-alpine is in ok.lock) with the given extra settings.
+  withDb =
+    extra:
+    eval [
+      base
+      net
+      vol
+      { virtualisation.pin-oci.containers.db = { image = "caddy:2-alpine"; } // extra; }
+    ];
+  orderingOf = c: {
+    after = resourceUnits c.systemd.services.podman-db.after;
+    requires = resourceUnits c.systemd.services.podman-db.requires;
+  };
+  both = units: {
+    after = units;
+    requires = units;
+  };
+  netAndVol = [
+    "podman-network-app-net.service"
+    "podman-volume-postgres_data.service"
+  ];
 in
 {
   tests = {
@@ -168,6 +193,141 @@ in
         failedByPinOci c
       );
       expected = lib.genAttrs [ "bad name" "-lead" "a/b" "" "_x" ] (_: [ true ]);
+    };
+    # ---- container ordering ----
+    testContainerIsOrderedAfterItsNetworkAndVolume = {
+      expr = orderingOf (withDb {
+        volumes = [ "postgres_data:/var/lib/postgresql/data" ];
+        extraOptions = [ "--network=app-net" ];
+      });
+      expected = both netAndVol;
+    };
+    testEveryNetworkSpellingIsDetected = {
+      expr = lib.mapAttrs (_: extra: (orderingOf (withDb extra)).after) {
+        networksOption.networks = [ "app-net" ];
+        short.extraOptions = [ "--net=app-net" ];
+        twoElements.extraOptions = [ "--network" "app-net" ];
+        twoElementsShort.extraOptions = [ "--net" "app-net" ];
+        withAlias.extraOptions = [ "--network=app-net:alias=db" ];
+        optionAlias.networks = [ "app-net:ip=10.89.1.5" ];
+        amongOthers.extraOptions = [ "--cap-add=NET_ADMIN" "--network=app-net" "--init" ];
+      };
+      expected = lib.genAttrs [
+        "networksOption"
+        "short"
+        "twoElements"
+        "twoElementsShort"
+        "withAlias"
+        "optionAlias"
+        "amongOthers"
+      ] (_: [ "podman-network-app-net.service" ]);
+    };
+    testVolumeOptionsAreIgnored = {
+      expr = (orderingOf (withDb { volumes = [ "postgres_data:/data:ro,Z" ]; })).requires;
+      expected = [ "podman-volume-postgres_data.service" ];
+    };
+    testUndeclaredAndBindMountedResourcesAddNoDependency = {
+      expr = orderingOf (withDb {
+        networks = [ "host" ];
+        extraOptions = [ "--network=bridge" "--network" "unknown-net" ];
+        volumes = [
+          "/srv:/srv"
+          "./rel:/rel"
+          "~/home:/home"
+          "unknown_vol:/x"
+          ":/empty"
+        ];
+      });
+      expected = both [ ];
+    };
+    testResourcesAreDeduplicated = {
+      expr = (orderingOf (withDb {
+        networks = [ "app-net" ];
+        extraOptions = [ "--network=app-net" ];
+        volumes = [ "postgres_data:/a" "postgres_data:/b" ];
+      })).requires;
+      expected = netAndVol;
+    };
+    testOrderingKeepsOciContainersOwnDependencies = {
+      expr =
+        let
+          c = eval [
+            base
+            net
+            {
+              virtualisation.pin-oci.containers = {
+                web.image = "caddy:2-alpine";
+                db = {
+                  image = "caddy:2-alpine";
+                  dependsOn = [ "web" ];
+                  networks = [ "app-net" ];
+                };
+              };
+            }
+          ];
+        in
+        {
+          requiresWeb = lib.elem "podman-web.service" c.systemd.services.podman-db.requires;
+          requiresNet = lib.elem "podman-network-app-net.service" c.systemd.services.podman-db.requires;
+          webUntouched = resourceUnits c.systemd.services.podman-web.requires;
+        };
+      expected = {
+        requiresWeb = true;
+        requiresNet = true;
+        webUntouched = [ ];
+      };
+    };
+    testDockerBackendOrdersAfterDockerResources = {
+      expr =
+        let
+          c = eval [
+            base
+            net
+            vol
+            { virtualisation.oci-containers.backend = lib.mkForce "docker"; }
+            {
+              virtualisation.pin-oci.containers.db = {
+                image = "caddy:2-alpine";
+                networks = [ "app-net" ];
+                volumes = [ "postgres_data:/d" ];
+              };
+            }
+          ];
+        in
+        resourceUnits c.systemd.services.docker-db.requires;
+      expected = [
+        "docker-network-app-net.service"
+        "docker-volume-postgres_data.service"
+      ];
+    };
+    testUnlockedContainerGetsNoUnitAndNoCrash = {
+      expr =
+        let
+          c = eval [
+            (with' ./fixtures/absent.lock { })
+            net
+            { virtualisation.pin-oci.containers.db = { image = "caddy:2-alpine"; networks = [ "app-net" ]; }; }
+          ];
+        in
+        {
+          hasUnit = c.systemd.services ? podman-db;
+          failures = failedByPinOci c;
+        };
+      expected = {
+        hasUnit = false;
+        failures = [ true ];
+      };
+    };
+    testDisabledModuleLeavesContainersAlone = {
+      expr =
+        let
+          c = eval [
+            net
+            { virtualisation.pin-oci.containers.db = { image = "caddy:2-alpine"; networks = [ "app-net" ]; }; }
+          ];
+        in
+        c.systemd.services ? podman-db;
+      expected = false;
     };
     testInvalidVolumeNameIsNamedInTheMessage = {
       expr =
