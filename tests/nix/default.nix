@@ -289,7 +289,10 @@ let
     };
   };
 
-  allTests = tests // (import ./infra.nix helpers).tests;
+  allTests =
+    tests
+    // (import ./infra.nix helpers).tests
+    // (import ./resources.nix helpers).tests;
   failures = lib.debug.runTests allTests;
 in
 pkgs.runCommand "pin-oci-module-tests" { } (

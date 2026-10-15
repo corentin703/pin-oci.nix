@@ -10,8 +10,12 @@ let
   backend = config.virtualisation.oci-containers.backend;
   bin = "${pkgs.${backend}}/bin/${backend}";
 
-  # Docker/Podman resource name rule; also safe inside a unit name.
-  validName = name: builtins.match "[a-zA-Z0-9][a-zA-Z0-9_.-]*" name != null;
+  inherit (import ./resources.nix { inherit lib; })
+    validName
+    networkName
+    volumeSource
+    networksFromExtraOptions
+    ;
 
   networkUnit = name: "${backend}-network-${name}";
   volumeUnit = name: "${backend}-volume-${name}";
@@ -67,39 +71,14 @@ let
     })
   ) cfg.volumes;
 
-  # Name of the resource a `--network` value designates (`app-net:alias=db` -> `app-net`).
-  nameOf = value: builtins.head (lib.splitString ":" value);
-
-  # Networks from `--network=x`, `--net=x` and the two-element form `--network x`.
-  networksFromExtraOptions =
-    opts:
-    lib.concatLists (
-      lib.imap0 (
-        i: opt:
-        let
-          m = builtins.match "--net(work)?=(.*)" opt;
-        in
-        if m != null then
-          [ (nameOf (builtins.elemAt m 1)) ]
-        else if (opt == "--network" || opt == "--net") && i + 1 < builtins.length opts then
-          [ (nameOf (builtins.elemAt opts (i + 1))) ]
-        else
-          [ ]
-      ) opts
-    );
-
-  # Source of each `volumes = [ "src:dst[:opts]" ]` entry. Bind mounts (/, ., ~) never match a
-  # declared volume: names cannot start with those characters.
-  volumeSources = volumes: map nameOf volumes;
-
   # Declared resources a container references, as unit names.
   dependenciesOf =
     c:
     lib.unique (
       map (n: "${networkUnit n}.service") (
-        lib.filter (n: cfg.networks ? ${n}) (map nameOf c.networks ++ networksFromExtraOptions c.extraOptions)
+        lib.filter (n: cfg.networks ? ${n}) (map networkName c.networks ++ networksFromExtraOptions c.extraOptions)
       )
-      ++ map (n: "${volumeUnit n}.service") (lib.filter (n: cfg.volumes ? ${n}) (volumeSources c.volumes))
+      ++ map (n: "${volumeUnit n}.service") (lib.filter (n: cfg.volumes ? ${n}) (map volumeSource c.volumes))
     );
 
   # Only containers that were actually lowered to oci-containers have a unit.

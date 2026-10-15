@@ -22,10 +22,7 @@ let
         images = { };
       };
 
-  # Same options as oci-containers, derived from the host configuration.
-  pinContainerModule = {
-    imports = options.virtualisation.oci-containers.containers.type.nestedTypes.elemType.getSubModules;
-  };
+  pinContainerModule = import ./container-module.nix { inherit options; };
 
   unpinned = lib.filterAttrs (_: c: !(parseRef c.image).pinned) cfg.containers;
 
