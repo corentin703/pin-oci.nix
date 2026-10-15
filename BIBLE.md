@@ -382,24 +382,28 @@ virtualisation.pin-oci = {
 
 ### 5.2 Systemd Lowering
 
-For each defined resource, a `oneshot` systemd unit is generated:
+Nothing is generated unless `virtualisation.pin-oci.enable = true`. For each defined resource, a `oneshot` systemd unit with `RemainAfterExit = true` and `wantedBy = [ "multi-user.target" ]` is generated (so declared resources exist even when no container references them). The unit body is idempotent: it creates the resource only when it is absent.
 
 * **Network:** `${backend}-network-${name}.service`
 ```bash
-ExecStart = "${pkgs.${backend}}/bin/${backend} network exists ${name} || ${pkgs.${backend}}/bin/${backend} network create ${name} [flags]"
+${backend} network inspect ${name} >/dev/null 2>&1 || ${backend} network create [--subnet <subnet>] [--internal] ${name}
 
 ```
 
 
 * **Volume:** `${backend}-volume-${name}.service`
 ```bash
-ExecStart = "${pkgs.${backend}}/bin/${backend} volume exists ${name} || ${pkgs.${backend}}/bin/${backend} volume create ${name} [flags]"
+${backend} volume inspect ${name} >/dev/null 2>&1 || ${backend} volume create --driver <driver> ${name}
 
 ```
 
 
+`${backend}` is the store path of `pkgs.${backend}` (`.../bin/${backend}`). `inspect` is used instead of `exists` because Docker has no `exists` subcommand (verified with Docker 29.8): `inspect` exits non-zero when the resource is absent on both backends. With the `docker` backend the units are ordered `after` and `requires` `docker.service`.
+
+Names must match `[a-zA-Z0-9][a-zA-Z0-9_.-]*` (the Docker/Podman rule, also safe in unit names); any other name fails an assertion at evaluation.
+
 * **Container ordering:**
-The `${backend}-${container}.service` units automatically receive:
+A `virtualisation.pin-oci.containers.<c>` receives, on its `serviceName` unit (`${backend}-${c}.service`), `after` and `requires` on the unit of every declared resource it references:
 ```nix
 after = [ "${backend}-network-app-net.service" "${backend}-volume-postgres_data.service" ];
 requires = [ "${backend}-network-app-net.service" "${backend}-volume-postgres_data.service" ];
@@ -407,6 +411,13 @@ requires = [ "${backend}-network-app-net.service" "${backend}-volume-postgres_da
 ```
 
 
+A container references:
+  * a network through the `networks` option, `extraOptions = [ "--network=<n>" ]`, `"--net=<n>"`, or the two-element form `[ "--network" "<n>" ]` (anything after a `:` in the value, such as `:alias=db`, is ignored);
+  * a volume through `volumes = [ "<name>:<path>[:opts]" ]` when the source is a name, that is not starting with `/`, `.` or `~`.
+
+Only names declared in `virtualisation.pin-oci.networks` / `volumes` produce a dependency; any other name (`host`, a pre-existing volume, a bind mount) is left alone. Nothing is added to a container that was not lowered (unlocked image).
+
+**Limitation:** resources are created by root. A rootless Podman container (`podman.user != "root"`) does not see them.
 
 ---
 
