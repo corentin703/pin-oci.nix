@@ -3,9 +3,13 @@
 
   inputs.nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
 
-  outputs = { self, nixpkgs }:
+  outputs =
+    { self, nixpkgs }:
     let
-      systems = [ "x86_64-linux" "aarch64-linux" ];
+      systems = [
+        "x86_64-linux"
+        "aarch64-linux"
+      ];
       forAllSystems = f: nixpkgs.lib.genAttrs systems (system: f nixpkgs.legacyPackages.${system});
     in
     {
@@ -14,8 +18,18 @@
       packages = forAllSystems (pkgs: rec {
         pin-oci = pkgs.rustPlatform.buildRustPackage {
           pname = "pin-oci";
-          version = "0.1.0";
-          src = ./.;
+          version = (builtins.fromTOML (builtins.readFile ./Cargo.toml)).package.version;
+          # Only what cargo reads: docs and Nix files do not invalidate the build.
+          src = pkgs.lib.fileset.toSource {
+            root = ./.;
+            fileset = pkgs.lib.fileset.unions [
+              ./Cargo.toml
+              ./Cargo.lock
+              ./src
+              ./tests/fixtures
+              (pkgs.lib.fileset.fileFilter (file: file.hasExt "rs") ./tests)
+            ];
+          };
           cargoLock.lockFile = ./Cargo.lock;
           nativeBuildInputs = [ pkgs.makeWrapper ];
           # Runtime dependency: registry access goes through skopeo.
@@ -29,29 +43,88 @@
 
       devShells = forAllSystems (pkgs: {
         default = pkgs.mkShell {
-          packages = [ pkgs.cargo pkgs.rustc pkgs.clippy pkgs.skopeo ];
+          inputsFrom = [ self.packages.${pkgs.stdenv.hostPlatform.system}.pin-oci ];
+          packages = [
+            pkgs.clippy
+            pkgs.rustfmt
+            pkgs.rust-analyzer
+            pkgs.nixfmt
+            pkgs.skopeo
+          ];
+          RUST_SRC_PATH = pkgs.rustPlatform.rustLibSrc;
         };
       });
 
+      formatter = forAllSystems (pkgs: pkgs.nixfmt);
+
       # buildRustPackage runs `cargo test` in its check phase.
-      checks = forAllSystems (pkgs: {
-        inherit (self.packages.${pkgs.stdenv.hostPlatform.system}) pin-oci;
-        module-tests = import ./tests/nix {
-          inherit pkgs nixpkgs;
-          module = self.nixosModules.default;
-        };
-        vm-infra = import ./tests/nix/vm-infra.nix {
-          inherit pkgs;
-          module = self.nixosModules.default;
-        };
-        vm-projects = import ./tests/nix/vm-projects.nix {
-          inherit pkgs;
-          module = self.nixosModules.default;
-        };
-        infra-scripts = import ./tests/nix/infra-scripts.nix {
-          inherit pkgs nixpkgs;
-          module = self.nixosModules.default;
-        };
-      });
+      checks = forAllSystems (
+        pkgs:
+        let
+          pin-oci = self.packages.${pkgs.stdenv.hostPlatform.system}.pin-oci;
+        in
+        {
+          inherit pin-oci;
+
+          clippy = pin-oci.overrideAttrs (old: {
+            pname = "pin-oci-clippy";
+            nativeBuildInputs = old.nativeBuildInputs ++ [ pkgs.clippy ];
+            doCheck = false;
+            buildPhase = "cargo clippy --offline --all-targets -- -D warnings";
+            installPhase = "touch $out";
+            postInstall = "";
+          });
+
+          rustfmt =
+            pkgs.runCommand "pin-oci-rustfmt"
+              {
+                nativeBuildInputs = [
+                  pkgs.rustfmt
+                  pkgs.findutils
+                ];
+              }
+              ''
+                cd ${pin-oci.src}
+                find . -name '*.rs' -print0 | xargs -0 rustfmt --check --edition 2021
+                touch $out
+              '';
+
+          nixfmt =
+            pkgs.runCommand "pin-oci-nixfmt"
+              {
+                nativeBuildInputs = [
+                  pkgs.nixfmt
+                  pkgs.findutils
+                ];
+                src = pkgs.lib.fileset.toSource {
+                  root = ./.;
+                  fileset = pkgs.lib.fileset.fileFilter (file: file.hasExt "nix") ./.;
+                };
+              }
+              ''
+                cd $src
+                find . -name '*.nix' -print0 | xargs -0 nixfmt --check
+                touch $out
+              '';
+
+          module-tests = import ./tests/nix {
+            inherit pkgs nixpkgs;
+            module = self.nixosModules.default;
+          };
+          infra-scripts = import ./tests/nix/infra-scripts.nix {
+            inherit pkgs nixpkgs;
+            module = self.nixosModules.default;
+          };
+          # NixOS VM tests: need KVM, kept out of the fast CI job (see .github/workflows/ci.yml).
+          vm-infra = import ./tests/nix/vm-infra.nix {
+            inherit pkgs;
+            module = self.nixosModules.default;
+          };
+          vm-projects = import ./tests/nix/vm-projects.nix {
+            inherit pkgs;
+            module = self.nixosModules.default;
+          };
+        }
+      );
     };
 }
