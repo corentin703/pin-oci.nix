@@ -39,7 +39,9 @@ let
       };
       script = ''
         ${bin} ${kind} inspect ${lib.escapeShellArg name} >/dev/null 2>&1 \
-          || ${bin} ${kind} create ${lib.concatMapStrings (f: "${f} ") createFlags}${lib.escapeShellArg name}
+          || ${bin} ${kind} create ${
+            lib.concatMapStrings (f: "${f} ") createFlags
+          }${lib.escapeShellArg name}
       '';
     };
 
@@ -76,13 +78,19 @@ let
     c:
     lib.unique (
       map (n: "${networkUnit n}.service") (
-        lib.filter (n: cfg.networks ? ${n}) (map networkName c.networks ++ networksFromExtraOptions c.extraOptions)
+        lib.filter (n: cfg.networks ? ${n}) (
+          map networkName c.networks ++ networksFromExtraOptions c.extraOptions
+        )
       )
-      ++ map (n: "${volumeUnit n}.service") (lib.filter (n: cfg.volumes ? ${n}) (map volumeSource c.volumes))
+      ++ map (n: "${volumeUnit n}.service") (
+        lib.filter (n: cfg.volumes ? ${n}) (map volumeSource c.volumes)
+      )
     );
 
   # Only containers that were actually lowered to oci-containers have a unit.
-  lowered = lib.filterAttrs (n: _: config.virtualisation.oci-containers.containers ? ${n}) cfg.containers;
+  lowered = lib.filterAttrs (
+    n: _: config.virtualisation.oci-containers.containers ? ${n}
+  ) cfg.containers;
 
   containerOrdering = lib.mapAttrs' (
     _: c:

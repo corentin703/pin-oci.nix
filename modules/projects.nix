@@ -160,23 +160,19 @@ let
 
   invalidNames = lib.filter (n: !validName n) (
     lib.attrNames projects
-    ++ flat (
-      _: pc:
-      lib.attrNames pc.services
-      ++ lib.attrNames pc.networks
-      ++ lib.attrNames pc.volumes
-    )
+    ++ flat (_: pc: lib.attrNames pc.services ++ lib.attrNames pc.networks ++ lib.attrNames pc.volumes)
   );
 
-  duplicates =
-    names: lib.unique (lib.filter (n: lib.count (m: m == n) names > 1) names);
+  duplicates = names: lib.unique (lib.filter (n: lib.count (m: m == n) names > 1) names);
 
   duplicateNames =
     duplicates (flat (project: pc: map (prefixed project) (lib.attrNames pc.services)))
     ++ duplicates (flat (project: pc: map (prefixed project) (lib.attrNames (ownNetworks pc))))
     ++ duplicates (flat (project: pc: map (prefixedVolume project) (lib.attrNames (ownVolumes pc))));
 
-  externalDefault = lib.attrNames (lib.filterAttrs (_: pc: pc.networks.default.external or false) projects);
+  externalDefault = lib.attrNames (
+    lib.filterAttrs (_: pc: pc.networks.default.external or false) projects
+  );
 
   missingExternals = flat (
     project: pc:
@@ -186,7 +182,9 @@ let
       )
     )
     ++ map (v: "${project}: volume '${v}'") (
-      lib.filter (v: !(cfg.volumes ? ${v})) (lib.attrNames (lib.filterAttrs (_: v: v.external) pc.volumes))
+      lib.filter (v: !(cfg.volumes ? ${v})) (
+        lib.attrNames (lib.filterAttrs (_: v: v.external) pc.volumes)
+      )
     )
   );
 

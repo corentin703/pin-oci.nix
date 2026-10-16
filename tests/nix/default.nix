@@ -27,7 +27,8 @@ let
 
   apply = import ../../src/apply.nix;
 
-  caddyDigest = "sha256:" + lib.concatStrings (lib.replicate 64 (if system == "aarch64-linux" then "c" else "a"));
+  caddyDigest =
+    "sha256:" + lib.concatStrings (lib.replicate 64 (if system == "aarch64-linux" then "c" else "a"));
   caddyPinned = "docker.io/library/caddy@${caddyDigest}";
 
   locked = eval [ (with' lockOk web) ];
@@ -49,15 +50,33 @@ let
 
   tests = {
     # ---- unit: reference normalization ----
-    testRefLibrary = refCase "redis:7" (canonical "docker.io/library/redis:7" "docker.io" "library/redis" "7" false);
-    testRefNoTagIsLatest = refCase "redis" (canonical "docker.io/library/redis:latest" "docker.io" "library/redis" "latest" false);
-    testRefUserRepo = refCase "prom/prometheus:v2.50.0" (canonical "docker.io/prom/prometheus:v2.50.0" "docker.io" "prom/prometheus" "v2.50.0" false);
-    testRefExplicitDockerIo = refCase "docker.io/redis:7" (canonical "docker.io/library/redis:7" "docker.io" "library/redis" "7" false);
-    testRefFullyQualified = refCase "docker.io/library/redis:7" (canonical "docker.io/library/redis:7" "docker.io" "library/redis" "7" false);
-    testRefOtherRegistry = refCase "ghcr.io/a/b:1" (canonical "ghcr.io/a/b:1" "ghcr.io" "a/b" "1" false);
-    testRefRegistryPort = refCase "localhost:5000/foo:1" (canonical "localhost:5000/foo:1" "localhost:5000" "foo" "1" false);
-    testRefRegistryPortNoTag = refCase "registry:5000/x/y" (canonical "registry:5000/x/y:latest" "registry:5000" "x/y" "latest" false);
-    testRefLocalhost = refCase "localhost/foo" (canonical "localhost/foo:latest" "localhost" "foo" "latest" false);
+    testRefLibrary = refCase "redis:7" (
+      canonical "docker.io/library/redis:7" "docker.io" "library/redis" "7" false
+    );
+    testRefNoTagIsLatest = refCase "redis" (
+      canonical "docker.io/library/redis:latest" "docker.io" "library/redis" "latest" false
+    );
+    testRefUserRepo = refCase "prom/prometheus:v2.50.0" (
+      canonical "docker.io/prom/prometheus:v2.50.0" "docker.io" "prom/prometheus" "v2.50.0" false
+    );
+    testRefExplicitDockerIo = refCase "docker.io/redis:7" (
+      canonical "docker.io/library/redis:7" "docker.io" "library/redis" "7" false
+    );
+    testRefFullyQualified = refCase "docker.io/library/redis:7" (
+      canonical "docker.io/library/redis:7" "docker.io" "library/redis" "7" false
+    );
+    testRefOtherRegistry = refCase "ghcr.io/a/b:1" (
+      canonical "ghcr.io/a/b:1" "ghcr.io" "a/b" "1" false
+    );
+    testRefRegistryPort = refCase "localhost:5000/foo:1" (
+      canonical "localhost:5000/foo:1" "localhost:5000" "foo" "1" false
+    );
+    testRefRegistryPortNoTag = refCase "registry:5000/x/y" (
+      canonical "registry:5000/x/y:latest" "registry:5000" "x/y" "latest" false
+    );
+    testRefLocalhost = refCase "localhost/foo" (
+      canonical "localhost/foo:latest" "localhost" "foo" "latest" false
+    );
     testRefDigestIsPinned = {
       expr = (parseRef "redis@sha256:${lib.concatStrings (lib.replicate 64 "b")}").pinned;
       expected = true;
@@ -67,7 +86,13 @@ let
       expected = true;
     };
     testRefSpellingsShareAKey = {
-      expr = lib.unique (map (r: (parseRef r).key) [ "redis:7" "docker.io/redis:7" "docker.io/library/redis:7" ]);
+      expr = lib.unique (
+        map (r: (parseRef r).key) [
+          "redis:7"
+          "docker.io/redis:7"
+          "docker.io/library/redis:7"
+        ]
+      );
       expected = [ "docker.io/library/redis:7" ];
     };
     testRefEmptyTagRejected = {
@@ -121,7 +146,9 @@ let
       };
     };
     testCliContractReportsTheModulePlatform = {
-      expr = lib.genAttrs [ "x86_64-linux" "aarch64-linux" ] (sys: (apply (evalOn sys [ (with' lockAbsent web) ])).system);
+      expr = lib.genAttrs [ "x86_64-linux" "aarch64-linux" ] (
+        sys: (apply (evalOn sys [ (with' lockAbsent web) ])).system
+      );
       expected = {
         x86_64-linux = "x86_64-linux";
         aarch64-linux = "aarch64-linux";
@@ -171,7 +198,12 @@ let
           "docker.io/library/caddy:2-alpine"
           system
         ];
-      expected = [ true true true true ];
+      expected = [
+        true
+        true
+        true
+        true
+      ];
     };
     testMissingLockfileLowersNothing = {
       expr = missing.virtualisation.oci-containers.containers;
@@ -209,7 +241,9 @@ let
       expected = [ "docker.io/library/caddy:2-alpine" ];
     };
     testLockTargetsEvaluateWithoutLockFileOption = {
-      expr = builtins.attrNames (eval [ { virtualisation.pin-oci.containers = web; } ]).virtualisation.pin-oci.lockTargets;
+      expr =
+        builtins.attrNames
+          (eval [ { virtualisation.pin-oci.containers = web; } ]).virtualisation.pin-oci.lockTargets;
       expected = [ "docker.io/library/caddy:2-alpine" ];
     };
     testCliContractShape = {
@@ -262,7 +296,11 @@ let
       expected = {
         targets = [ "docker.io/library/redis:7" ];
         failed = [ ];
-        images = [ "docker.io/library/redis@sha256:${lib.concatStrings (lib.replicate 64 (if system == "aarch64-linux" then "d" else "b"))}" ];
+        images = [
+          "docker.io/library/redis@sha256:${
+            lib.concatStrings (lib.replicate 64 (if system == "aarch64-linux" then "d" else "b"))
+          }"
+        ];
       };
     };
     testDisabledModuleAddsNothing = {
@@ -280,7 +318,17 @@ let
       };
     };
     testLockFileIsMandatoryWhenEnabled = {
-      expr = fails (map (a: a.assertion) (eval [ { virtualisation.pin-oci = { enable = true; containers = web; }; } ]).assertions);
+      expr = fails (
+        map (a: a.assertion)
+          (eval [
+            {
+              virtualisation.pin-oci = {
+                enable = true;
+                containers = web;
+              };
+            }
+          ]).assertions
+      );
       expected = true;
     };
     testInvalidReferenceFailsEvaluation = {

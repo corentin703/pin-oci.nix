@@ -72,8 +72,7 @@ pkgs.testers.runNixOSTest {
     { nodes, ... }:
     let
       entries =
-        backend: container:
-        nodes.${backend}.virtualisation.oci-containers.containers.${container}.networks;
+        backend: container: nodes.${backend}.virtualisation.oci-containers.containers.${container}.networks;
     in
     ''
       import json

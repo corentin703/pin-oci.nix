@@ -41,7 +41,8 @@ rec {
     rename: value:
     let
       csv = builtins.match "(.*,)?name=([^,]*)(.*)" value;
-      before = if csv == null then "" else (if builtins.elemAt csv 0 == null then "" else builtins.elemAt csv 0);
+      before =
+        if csv == null then "" else (if builtins.elemAt csv 0 == null then "" else builtins.elemAt csv 0);
       name = networkName value;
     in
     if csv != null then

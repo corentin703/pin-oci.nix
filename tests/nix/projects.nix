@@ -50,7 +50,12 @@ let
     }
     // extra;
   };
-  evalProject = extra: eval [ base (project extra) ];
+  evalProject =
+    extra:
+    eval [
+      base
+      (project extra)
+    ];
   has = needle: hay: lib.hasInfix needle hay;
   ordered = c: unit: c.systemd.services.${unit}.requires;
 in
@@ -104,10 +109,12 @@ in
       expected = "custom-web";
     };
     testGlobalAndProjectContainersCoexist = {
-      expr = builtins.attrNames (containers (eval [
-        (with' lockOk { plain.image = "redis:7"; })
-        (project { services.web.image = "caddy:2-alpine"; })
-      ]));
+      expr = builtins.attrNames (
+        containers (eval [
+          (with' lockOk { plain.image = "redis:7"; })
+          (project { services.web.image = "caddy:2-alpine"; })
+        ])
+      );
       expected = [
         "p-web"
         "plain"
@@ -141,7 +148,14 @@ in
     testModuleDisabledGeneratesNothing = {
       expr =
         let
-          c = eval [ { virtualisation.pin-oci.projects.p = { enable = true; services.web.image = "caddy:2-alpine"; }; } ];
+          c = eval [
+            {
+              virtualisation.pin-oci.projects.p = {
+                enable = true;
+                services.web.image = "caddy:2-alpine";
+              };
+            }
+          ];
         in
         builtins.attrNames (containers c);
       expected = [ ];
@@ -234,7 +248,10 @@ in
     testVolumeOptionsSurviveTheRewrite = {
       expr =
         (svc (evalProject {
-          services.web = { image = "caddy:2-alpine"; volumes = [ "v:/d:ro,Z" ]; };
+          services.web = {
+            image = "caddy:2-alpine";
+            volumes = [ "v:/d:ro,Z" ];
+          };
           volumes.v = { };
         }) "p-web").volumes;
       expected = [ "p_v:/d:ro,Z" ];
@@ -244,11 +261,19 @@ in
         (svc (evalProject {
           services.web = {
             image = "caddy:2-alpine";
-            volumes = [ "/srv:/srv" "./rel:/r" "mine:/m" ];
+            volumes = [
+              "/srv:/srv"
+              "./rel:/r"
+              "mine:/m"
+            ];
           };
           volumes.v = { };
         }) "p-web").volumes;
-      expected = [ "/srv:/srv" "./rel:/r" "mine:/m" ];
+      expected = [
+        "/srv:/srv"
+        "./rel:/r"
+        "mine:/m"
+      ];
     };
     testVolumeDriverIsForwarded = {
       expr = (evalProject { volumes.v.driver = "nfs"; }).virtualisation.pin-oci.volumes.p_v.driver;
@@ -256,16 +281,26 @@ in
     };
     testSameVolumeNameInTwoProjectsDoesNotCollide = {
       expr =
-        builtins.attrNames (eval [
-          base
-          {
-            virtualisation.pin-oci.projects = {
-              a = { enable = true; volumes.data = { }; };
-              b = { enable = true; volumes.data = { }; };
-            };
-          }
-        ]).virtualisation.pin-oci.volumes;
-      expected = [ "a_data" "b_data" ];
+        builtins.attrNames
+          (eval [
+            base
+            {
+              virtualisation.pin-oci.projects = {
+                a = {
+                  enable = true;
+                  volumes.data = { };
+                };
+                b = {
+                  enable = true;
+                  volumes.data = { };
+                };
+              };
+            }
+          ]).virtualisation.pin-oci.volumes;
+      expected = [
+        "a_data"
+        "b_data"
+      ];
     };
 
     # ---- external resources ----
@@ -276,7 +311,10 @@ in
             (with' lockOk { })
             { virtualisation.pin-oci.volumes.shared = { }; }
             (project {
-              services.web = { image = "caddy:2-alpine"; volumes = [ "shared:/s" ]; };
+              services.web = {
+                image = "caddy:2-alpine";
+                volumes = [ "shared:/s" ];
+              };
               volumes.shared.external = true;
             })
           ];
@@ -301,7 +339,10 @@ in
             (with' lockOk { })
             { virtualisation.pin-oci.networks.shared = { }; }
             (project {
-              services.web = { image = "caddy:2-alpine"; networks = [ "shared:alias=w" ]; };
+              services.web = {
+                image = "caddy:2-alpine";
+                networks = [ "shared:alias=w" ];
+              };
               networks.shared.external = true;
             })
           ];
@@ -328,11 +369,17 @@ in
         in
         {
           failures = failedByPinOci c;
-          names = [ (has "volume 'nope'" m) (has "network 'nowhere'" m) ];
+          names = [
+            (has "volume 'nope'" m)
+            (has "network 'nowhere'" m)
+          ];
         };
       expected = {
         failures = [ true ];
-        names = [ true true ];
+        names = [
+          true
+          true
+        ];
       };
     };
 
@@ -341,11 +388,19 @@ in
       expr =
         let
           c = evalProject {
-            networks.backend = { subnet = "10.6.0.0/24"; internal = true; };
+            networks.backend = {
+              subnet = "10.6.0.0/24";
+              internal = true;
+            };
             services.db = {
               image = "caddy:2-alpine";
               networks = [ "backend:alias=db" ];
-              extraOptions = [ "--network=backend" "--net" "backend" "--network=host" ];
+              extraOptions = [
+                "--network=backend"
+                "--net"
+                "backend"
+                "--network=host"
+              ];
             };
           };
         in
@@ -355,9 +410,17 @@ in
           extraOptions = (svc c "p-db").extraOptions;
         };
       expected = {
-        created.p-backend = { subnet = "10.6.0.0/24"; internal = true; };
+        created.p-backend = {
+          subnet = "10.6.0.0/24";
+          internal = true;
+        };
         networks = [ "p-backend:alias=db" ];
-        extraOptions = [ "--network=p-backend" "--net" "p-backend" "--network=host" ];
+        extraOptions = [
+          "--network=p-backend"
+          "--net"
+          "p-backend"
+          "--network=host"
+        ];
       };
     };
     testDockerCsvNetworkReferenceIsRewritten = {
@@ -366,7 +429,10 @@ in
           base
           (project {
             networks.backend = { };
-            services.db = { image = "caddy:2-alpine"; networks = [ "name=backend,alias=db" ]; };
+            services.db = {
+              image = "caddy:2-alpine";
+              networks = [ "name=backend,alias=db" ];
+            };
           })
           { virtualisation.oci-containers.backend = lib.mkForce "docker"; }
         ]) "p-db").networks;
@@ -376,7 +442,10 @@ in
       expr =
         (svc (evalProject {
           networks.backend = { };
-          services.backend = { image = "caddy:2-alpine"; extraOptions = [ "--hostname=backend" ]; };
+          services.backend = {
+            image = "caddy:2-alpine";
+            extraOptions = [ "--hostname=backend" ];
+          };
         }) "p-backend").extraOptions;
       expected = [ "--hostname=backend" ];
     };
@@ -388,7 +457,9 @@ in
     };
     testDependsOnOrdersTheUnits = {
       expr = {
-        requires = lib.elem "podman-monitoring-prometheus.service" (ordered mon "podman-monitoring-grafana");
+        requires = lib.elem "podman-monitoring-prometheus.service" (
+          ordered mon "podman-monitoring-grafana"
+        );
         after = lib.elem "podman-monitoring-prometheus.service" mon.systemd.services.podman-monitoring-grafana.after;
         reverse = lib.elem "podman-monitoring-grafana.service" (ordered mon "podman-monitoring-prometheus");
       };
@@ -401,7 +472,12 @@ in
     testDependsOnOnAnUnknownServiceFails = {
       expr =
         let
-          c = evalProject { services.web = { image = "caddy:2-alpine"; dependsOn = [ "ghost" ]; }; };
+          c = evalProject {
+            services.web = {
+              image = "caddy:2-alpine";
+              dependsOn = [ "ghost" ];
+            };
+          };
         in
         {
           failures = failedByPinOci c;
@@ -473,7 +549,11 @@ in
         network = evalProject { networks."-x" = { }; };
         project = eval [
           base
-          { virtualisation.pin-oci.projects."bad project" = { enable = true; }; }
+          {
+            virtualisation.pin-oci.projects."bad project" = {
+              enable = true;
+            };
+          }
         ];
       };
       expected = {
@@ -490,8 +570,14 @@ in
             base
             {
               virtualisation.pin-oci.projects = {
-                "a-b" = { enable = true; services.c.image = "caddy:2-alpine"; };
-                a = { enable = true; services."b-c".image = "caddy:2-alpine"; };
+                "a-b" = {
+                  enable = true;
+                  services.c.image = "caddy:2-alpine";
+                };
+                a = {
+                  enable = true;
+                  services."b-c".image = "caddy:2-alpine";
+                };
               };
             }
           ];

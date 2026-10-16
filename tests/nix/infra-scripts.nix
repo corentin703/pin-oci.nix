@@ -7,7 +7,12 @@
 # Runs the *generated* network/volume unit scripts against a fake stateful backend:
 # idempotence, flags, recreation of a removed resource and failure propagation.
 let
-  inherit (import ./common.nix { inherit pkgs nixpkgs module; }) lib eval with' lockOk;
+  inherit (import ./common.nix { inherit pkgs nixpkgs module; })
+    lib
+    eval
+    with'
+    lockOk
+    ;
 
   config = eval [
     (with' lockOk { })

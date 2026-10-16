@@ -11,7 +11,9 @@
 # Every oci-containers option must keep working through pin-oci: a container defined with
 # pin-oci must produce exactly what the same container defined directly would.
 let
-  pinned = "docker.io/library/caddy@sha256:${lib.concatStrings (lib.replicate 64 (if system == "aarch64-linux" then "c" else "a"))}";
+  pinned = "docker.io/library/caddy@sha256:${
+    lib.concatStrings (lib.replicate 64 (if system == "aarch64-linux" then "c" else "a"))
+  }";
 
   # Every option of the container submodule that makes sense without login/image files.
   rich = {
@@ -57,9 +59,19 @@ let
     };
   };
 
-  viaPinOci = eval [ (with' lockOk { web = rich // { image = "caddy:2-alpine"; }; }) ];
+  viaPinOci = eval [
+    (with' lockOk {
+      web = rich // {
+        image = "caddy:2-alpine";
+      };
+    })
+  ];
   direct = eval [
-    { virtualisation.oci-containers.containers.web = rich // { image = pinned; }; }
+    {
+      virtualisation.oci-containers.containers.web = rich // {
+        image = pinned;
+      };
+    }
   ];
 
   container = c: lib.filterAttrs (n: _: n != "image") c.virtualisation.oci-containers.containers.web;
@@ -92,7 +104,9 @@ in
     testNoOptionIsLostOrAdded = {
       expr =
         let
-          pinOci = builtins.attrNames (removeAttrs viaPinOci.virtualisation.pin-oci.containers.web [ "_module" ]);
+          pinOci = builtins.attrNames (
+            removeAttrs viaPinOci.virtualisation.pin-oci.containers.web [ "_module" ]
+          );
           oci = builtins.attrNames direct.virtualisation.oci-containers.containers.web;
         in
         pinOci == oci;
@@ -101,9 +115,16 @@ in
     testDocumentedOptionsAreAllCovered = {
       # `rich` must set every option of the submodule that has no mandatory side input,
       # otherwise a new nixpkgs option would silently escape this comparison.
-      expr = lib.subtractLists (builtins.attrNames rich ++ [ "image" "imageFile" "imageStream" "login" "dependsOn" ]) (
-        builtins.attrNames direct.virtualisation.oci-containers.containers.web
-      );
+      expr = lib.subtractLists (
+        builtins.attrNames rich
+        ++ [
+          "image"
+          "imageFile"
+          "imageStream"
+          "login"
+          "dependsOn"
+        ]
+      ) (builtins.attrNames direct.virtualisation.oci-containers.containers.web);
       expected = [ ];
     };
   };

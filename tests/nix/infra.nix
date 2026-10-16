@@ -44,7 +44,12 @@ let
       base
       net
       vol
-      { virtualisation.pin-oci.containers.db = { image = "caddy:2-alpine"; } // extra; }
+      {
+        virtualisation.pin-oci.containers.db = {
+          image = "caddy:2-alpine";
+        }
+        // extra;
+      }
     ];
   orderingOf = c: {
     after = resourceUnits c.systemd.services.podman-db.after;
@@ -83,8 +88,7 @@ in
             (unit (eval [
               base
               { virtualisation.pin-oci.networks.plain = { }; }
-            ]) "podman-network-plain"
-            ).script;
+            ]) "podman-network-plain").script;
         in
         {
           creates = has "/bin/podman network create plain" script;
@@ -206,11 +210,21 @@ in
       expr = lib.mapAttrs (_: extra: (orderingOf (withDb extra)).after) {
         networksOption.networks = [ "app-net" ];
         short.extraOptions = [ "--net=app-net" ];
-        twoElements.extraOptions = [ "--network" "app-net" ];
-        twoElementsShort.extraOptions = [ "--net" "app-net" ];
+        twoElements.extraOptions = [
+          "--network"
+          "app-net"
+        ];
+        twoElementsShort.extraOptions = [
+          "--net"
+          "app-net"
+        ];
         withAlias.extraOptions = [ "--network=app-net:alias=db" ];
         optionAlias.networks = [ "app-net:ip=10.89.1.5" ];
-        amongOthers.extraOptions = [ "--cap-add=NET_ADMIN" "--network=app-net" "--init" ];
+        amongOthers.extraOptions = [
+          "--cap-add=NET_ADMIN"
+          "--network=app-net"
+          "--init"
+        ];
       };
       expected = lib.genAttrs [
         "networksOption"
@@ -223,13 +237,20 @@ in
       ] (_: [ "podman-network-app-net.service" ]);
     };
     testVolumeOptionsAreIgnored = {
-      expr = (orderingOf (withDb { volumes = [ "postgres_data:/data:ro,Z" ]; })).requires;
+      expr =
+        (orderingOf (withDb {
+          volumes = [ "postgres_data:/data:ro,Z" ];
+        })).requires;
       expected = [ "podman-volume-postgres_data.service" ];
     };
     testUndeclaredAndBindMountedResourcesAddNoDependency = {
       expr = orderingOf (withDb {
         networks = [ "host" ];
-        extraOptions = [ "--network=bridge" "--network" "unknown-net" ];
+        extraOptions = [
+          "--network=bridge"
+          "--network"
+          "unknown-net"
+        ];
         volumes = [
           "/srv:/srv"
           "./rel:/rel"
@@ -241,11 +262,15 @@ in
       expected = both [ ];
     };
     testResourcesAreDeduplicated = {
-      expr = (orderingOf (withDb {
-        networks = [ "app-net" ];
-        extraOptions = [ "--network=app-net" ];
-        volumes = [ "postgres_data:/a" "postgres_data:/b" ];
-      })).requires;
+      expr =
+        (orderingOf (withDb {
+          networks = [ "app-net" ];
+          extraOptions = [ "--network=app-net" ];
+          volumes = [
+            "postgres_data:/a"
+            "postgres_data:/b"
+          ];
+        })).requires;
       expected = netAndVol;
     };
     testOrderingKeepsOciContainersOwnDependencies = {
@@ -306,7 +331,12 @@ in
           c = eval [
             (with' ./fixtures/absent.lock { })
             net
-            { virtualisation.pin-oci.containers.db = { image = "caddy:2-alpine"; networks = [ "app-net" ]; }; }
+            {
+              virtualisation.pin-oci.containers.db = {
+                image = "caddy:2-alpine";
+                networks = [ "app-net" ];
+              };
+            }
           ];
         in
         {
@@ -323,7 +353,12 @@ in
         let
           c = eval [
             net
-            { virtualisation.pin-oci.containers.db = { image = "caddy:2-alpine"; networks = [ "app-net" ]; }; }
+            {
+              virtualisation.pin-oci.containers.db = {
+                image = "caddy:2-alpine";
+                networks = [ "app-net" ];
+              };
+            }
           ];
         in
         c.systemd.services ? podman-db;
