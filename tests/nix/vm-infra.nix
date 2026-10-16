@@ -5,6 +5,9 @@
 pkgs.testers.runNixOSTest {
   name = "pin-oci-infra";
 
+  # A stuck driver must fail with its log long before the CI job is cancelled.
+  globalTimeout = 600;
+
   defaults =
     { lib, ... }:
     {

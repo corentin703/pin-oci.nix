@@ -21,6 +21,9 @@ in
 pkgs.testers.runNixOSTest {
   name = "pin-oci-projects";
 
+  # A stuck driver must fail with its log long before the CI job is cancelled.
+  globalTimeout = 600;
+
   defaults = {
     imports = [ module ];
     virtualisation.pin-oci = {

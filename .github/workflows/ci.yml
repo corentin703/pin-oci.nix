@@ -37,7 +37,7 @@ jobs:
   vm:
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6
       - name: Enable KVM
@@ -51,6 +51,7 @@ jobs:
           nix_path: nixpkgs=channel:nixos-unstable
       - name: Run VM tests
         run: |
-          nix build --print-build-logs --no-link \
+          # One test at a time: two tests in parallel mean four VMs on a 4-vCPU runner.
+          nix build --max-jobs 1 --print-build-logs --no-link \
             .#checks.x86_64-linux.vm-infra \
             .#checks.x86_64-linux.vm-projects
