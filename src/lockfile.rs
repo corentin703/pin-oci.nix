@@ -41,6 +41,13 @@ impl Image {
     pub(crate) fn has_system(&self, system: &str) -> bool {
         self.arch.contains_key(system)
     }
+
+    /// `(system, digest)` of every recorded platform, in system order.
+    pub(crate) fn digests(&self) -> impl Iterator<Item = (&str, &str)> {
+        self.arch
+            .iter()
+            .map(|(system, platform)| (system.as_str(), platform.digest.as_str()))
+    }
 }
 
 #[cfg(test)]
@@ -167,6 +174,10 @@ impl Lockfile {
             })
             .map(str::to_owned)
             .collect()
+    }
+
+    pub(crate) fn get(&self, key: &str) -> Option<&Image> {
+        self.images.get(key)
     }
 
     pub(crate) fn insert(&mut self, key: String, image: Image) {

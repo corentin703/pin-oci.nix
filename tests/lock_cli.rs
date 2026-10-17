@@ -14,6 +14,9 @@ const SOLO: &str =
 const NOPE: &str =
     r#""docker.io/library/nope:1":{"registry":"docker.io","repository":"library/nope","tag":"1"}"#;
 
+const AMD64: &str = "sha256:173b26306d711395accaeba8b67afcaad2a085ccb1e6bf26010bfe8c095a5229";
+const NEW_AMD64: &str = "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
+
 struct Fixture {
     dir: PathBuf,
 }
@@ -46,6 +49,11 @@ impl Fixture {
     }
 
     fn skopeo(&self) {
+        self.skopeo_serving(&format!("{FIXTURES}/skopeo-index.json"));
+    }
+
+    /// Fake skopeo whose caddy index is read from `caddy_index` (to simulate a moved tag).
+    fn skopeo_serving(&self, caddy_index: &str) {
         let log = self.dir.join("skopeo.log");
         self.executable(
             "skopeo",
@@ -57,12 +65,13 @@ case "$*" in
 esac
 emit() {{ while IFS= read -r line || [ -n "$line" ]; do printf '%s\n' "$line"; done < "$1"; }}
 case "$*" in
-  *--raw*/library/caddy:*) emit '{f}/skopeo-index.json' ;;
+  *--raw*/library/caddy:*) emit '{caddy}' ;;
   *--raw*/acme/solo:*) emit '{f}/skopeo-single-raw.json' ;;
   *--no-tags*/acme/solo:*) emit '{f}/skopeo-single-inspect.json' ;;
   *) echo "manifest unknown" >&2; exit 2 ;;
 esac"#,
                 log = log.display(),
+                caddy = caddy_index,
                 f = FIXTURES
             ),
         );
@@ -70,6 +79,29 @@ esac"#,
 
     fn skopeo_calls(&self) -> usize {
         fs::read_to_string(self.dir.join("skopeo.log")).map_or(0, |log| log.lines().count())
+    }
+
+    fn lock_with(&self, extra: &[&str]) -> Output {
+        let flake = format!("{}#box", self.dir.join("flake").display());
+        Command::new(env!("CARGO_BIN_EXE_pin-oci"))
+            .args(["lock", "--flake", &flake])
+            .args(extra)
+            .env("PATH", self.dir.join("bin"))
+            .output()
+            .unwrap()
+    }
+
+    /// The caddy tag now points at other digests.
+    fn move_caddy_tag(&self) {
+        let index = fs::read_to_string(format!("{FIXTURES}/skopeo-index.json")).unwrap();
+        let moved = index.replace(AMD64, NEW_AMD64);
+        let path = self.dir.join("moved-index.json");
+        fs::write(&path, moved).unwrap();
+        self.skopeo_serving(path.to_str().unwrap());
+    }
+
+    fn skopeo_log(&self) -> String {
+        fs::read_to_string(self.dir.join("skopeo.log")).unwrap_or_default()
     }
 
     fn check(&self) -> Output {
@@ -199,4 +231,110 @@ fn missing_skopeo_and_corrupt_lockfile_are_errors() {
     fs::write(fx.lockfile(), "{").unwrap();
     assert_eq!(fx.run("lock").status.code(), Some(2));
     assert_eq!(fs::read_to_string(fx.lockfile()).unwrap(), "{");
+}
+
+fn stdout(out: &Output) -> String {
+    String::from_utf8_lossy(&out.stdout).into_owned()
+}
+
+#[test]
+fn update_follows_a_moved_tag_while_plain_lock_does_not() {
+    let fx = Fixture::new("update-moved");
+    fx.nix("x86_64-linux", &[CADDY, SOLO]);
+    fx.skopeo();
+    assert_eq!(fx.run("lock").status.code(), Some(0));
+
+    fx.move_caddy_tag();
+    let calls = fx.skopeo_calls();
+    assert_eq!(fx.run("lock").status.code(), Some(0));
+    assert_eq!(
+        fx.skopeo_calls(),
+        calls,
+        "plain lock does not look at the registry"
+    );
+    // The solo fixture happens to report the same amd64 digest: count, do not just look.
+    let amd64_before = fs::read_to_string(fx.lockfile())
+        .unwrap()
+        .matches(AMD64)
+        .count();
+    assert_eq!(amd64_before, 2);
+
+    let out = fx.lock_with(&["--update"]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert!(
+        stdout(&out).contains("~ docker.io/library/caddy:2-alpine"),
+        "{}",
+        stdout(&out)
+    );
+    assert!(
+        stdout(&out).contains("-> sha256:eeeeeeeeeeee…"),
+        "{}",
+        stdout(&out)
+    );
+    let lock = fs::read_to_string(fx.lockfile()).unwrap();
+    assert!(lock.contains(NEW_AMD64));
+    assert_eq!(
+        lock.matches(AMD64).count(),
+        amd64_before - 1,
+        "only caddy moved"
+    );
+    assert_eq!(fx.check().status.code(), Some(0));
+}
+
+#[test]
+fn update_with_a_key_only_looks_up_that_image() {
+    let fx = Fixture::new("update-key");
+    fx.nix("x86_64-linux", &[CADDY, SOLO]);
+    fx.skopeo();
+    assert_eq!(fx.run("lock").status.code(), Some(0));
+    let caddy_lookups = fx.skopeo_log().matches("library/caddy").count();
+
+    fx.move_caddy_tag();
+    let out = fx.lock_with(&["--update", "docker.io/acme/solo:1"]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert_eq!(
+        fx.skopeo_log().matches("library/caddy").count(),
+        caddy_lookups
+    );
+    assert!(!fs::read_to_string(fx.lockfile())
+        .unwrap()
+        .contains(NEW_AMD64));
+}
+
+#[test]
+fn update_with_an_unknown_key_exits_2_without_calling_skopeo() {
+    let fx = Fixture::new("update-unknown");
+    fx.nix("x86_64-linux", &[CADDY, SOLO]);
+    fx.skopeo();
+    assert_eq!(fx.run("lock").status.code(), Some(0));
+    let (before, calls) = (fs::read(fx.lockfile()).unwrap(), fx.skopeo_calls());
+
+    let out = fx.lock_with(&["--update", "caddy:2-alpine"]);
+    assert_eq!(out.status.code(), Some(2));
+    let err = stderr(&out);
+    assert!(
+        err.contains("not a declared image: caddy:2-alpine"),
+        "{err}"
+    );
+    assert!(
+        err.contains("  - docker.io/library/caddy:2-alpine"),
+        "{err}"
+    );
+    assert_eq!(fx.skopeo_calls(), calls);
+    assert_eq!(fs::read(fx.lockfile()).unwrap(), before);
+}
+
+#[test]
+fn a_failing_update_leaves_the_lockfile_byte_identical() {
+    let fx = Fixture::new("update-fails");
+    fx.nix("x86_64-linux", &[CADDY, SOLO]);
+    fx.skopeo();
+    assert_eq!(fx.run("lock").status.code(), Some(0));
+    let before = fs::read(fx.lockfile()).unwrap();
+
+    // The registry now refuses caddy.
+    fx.skopeo_serving("/nonexistent/index.json");
+    let out = fx.lock_with(&["--update"]);
+    assert_eq!(out.status.code(), Some(2));
+    assert_eq!(fs::read(fx.lockfile()).unwrap(), before);
 }

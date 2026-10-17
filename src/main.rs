@@ -31,19 +31,40 @@ enum Command {
         /// Only check that every declared image is in the lockfile; change nothing
         #[arg(long)]
         check: bool,
+        /// Re-resolve locked images to the latest digest of their tag (default: all)
+        #[arg(long, conflicts_with = "check")]
+        update: bool,
+        /// With --update: canonical keys of the images to refresh, as in pin-oci.lock
+        #[arg(requires = "update", conflicts_with = "check", value_name = "IMAGE")]
+        images: Vec<String>,
     },
 }
 
 /// Exit codes: 0 = in sync, 1 = out of sync, 2 = error.
 fn main() -> ExitCode {
     match Cli::parse().command {
-        Command::Lock { flake, file, check } if check => run_check(&flake, file.as_deref()),
-        Command::Lock { flake, file, .. } => run_lock(&flake, file.as_deref()),
+        Command::Lock {
+            flake, file, check, ..
+        } if check => run_check(&flake, file.as_deref()),
+        Command::Lock {
+            flake,
+            file,
+            update,
+            images,
+            ..
+        } => {
+            let refresh = match (update, images.is_empty()) {
+                (false, _) => lock::Refresh::Missing,
+                (true, true) => lock::Refresh::All,
+                (true, false) => lock::Refresh::Only(images),
+            };
+            run_lock(&flake, file.as_deref(), &refresh)
+        }
     }
 }
 
-fn run_lock(flake: &str, file: Option<&Path>) -> ExitCode {
-    match lock::lock(&nix::NixCli, &registry::SkopeoCli, flake, file) {
+fn run_lock(flake: &str, file: Option<&Path>, refresh: &lock::Refresh) -> ExitCode {
+    match lock::lock(&nix::NixCli, &registry::SkopeoCli, flake, file, refresh) {
         Ok(outcome) => {
             println!("{}", outcome.message());
             ExitCode::SUCCESS
@@ -83,7 +104,9 @@ mod tests {
     #[test]
     fn lock_defaults() {
         match parse(&["lock"]).unwrap().command {
-            Command::Lock { flake, file, check } => {
+            Command::Lock {
+                flake, file, check, ..
+            } => {
                 assert_eq!(flake, ".");
                 assert_eq!(file, None);
                 assert!(!check);
@@ -97,7 +120,9 @@ mod tests {
             .unwrap()
             .command
         {
-            Command::Lock { flake, file, check } => {
+            Command::Lock {
+                flake, file, check, ..
+            } => {
                 assert_eq!(flake, "/etc/nixos#host");
                 assert_eq!(file, Some(PathBuf::from("x.lock")));
                 assert!(!check);
@@ -111,12 +136,37 @@ mod tests {
             .unwrap()
             .command
         {
-            Command::Lock { flake, file, check } => {
+            Command::Lock {
+                flake, file, check, ..
+            } => {
                 assert_eq!(flake, ".#box");
                 assert_eq!(file, Some(PathBuf::from("x.lock")));
                 assert!(check);
             }
         }
+    }
+
+    #[test]
+    fn update_takes_optional_canonical_keys() {
+        match parse(&["lock", "--update"]).unwrap().command {
+            Command::Lock { update, images, .. } => assert!(update && images.is_empty()),
+        }
+        match parse(&["lock", "--update", "docker.io/library/caddy:2-alpine", "b"])
+            .unwrap()
+            .command
+        {
+            Command::Lock { update, images, .. } => {
+                assert!(update);
+                assert_eq!(images, ["docker.io/library/caddy:2-alpine", "b"]);
+            }
+        }
+    }
+
+    #[test]
+    fn images_need_update_and_update_excludes_check() {
+        assert!(parse(&["lock", "docker.io/library/caddy:2-alpine"]).is_err());
+        assert!(parse(&["lock", "--check", "docker.io/library/caddy:2-alpine"]).is_err());
+        assert!(parse(&["lock", "--check", "--update"]).is_err());
     }
 
     #[test]

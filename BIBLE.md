@@ -326,7 +326,7 @@ The CLI never parses image references and holds no registry client or credential
 
 #### Commands:
 
-* `pin-oci lock [--flake <ref>] [--file <path>]`, and its mode `--check` below:
+* `pin-oci lock [--flake <ref>] [--file <path>] [--update [<image>...]]`, and its mode `--check` below:
 1. Evaluates the configuration without building, retrieving the host system and the targets in a single evaluation:
 ```bash
 nix eval --json <flake>#nixosConfigurations."<host>".config \
@@ -335,13 +335,15 @@ nix eval --json <flake>#nixosConfigurations."<host>".config \
 ```
 
 
-2. Resolves only the targets missing from the lockfile (absent key, or no entry for the host system); existing entries are never re-resolved.
+2. Resolves only the targets missing from the lockfile (absent key, or no entry for the host system); existing entries are never re-resolved, unless `--update` selects them (see below).
 3. For each, runs `skopeo inspect --raw docker://<registry>/<repository>:<tag>`:
    * **index** (`manifests[]`): takes each entry's `digest` and `platform.{os,architecture,variant}`, maps platforms through the table of §2 and ignores unmappable entries (`unknown/unknown` attestations, `s390x`, `arm` v6...);
    * **single manifest** (no `manifests`): runs `skopeo inspect --no-tags` and reads `Digest`, `Os`, `Architecture`, `Variant`; an unmappable platform is an error.
 4. Fails if an image has no manifest for the host system, or if two manifests map to the same system.
 5. Prunes lockfile entries absent from `lockTargets`.
 6. Writes deterministic JSON (`BTreeMap` order, fixed field order, 2-space indent, final newline), atomically (temporary file then rename), and leaves the file untouched when the content is unchanged.
+
+**`--update [<image>...]`** is the only way a locked digest changes. It re-resolves locked images, moving each tag to its current digests, and replaces the whole entry (every platform of the index, not only the host's). With no argument it covers every declared image; otherwise only the given images, each named by its **canonical key**, exactly as it appears in the lockfile and in `lockTargets`. The CLI still does not normalize: a key that no declared image has (`caddy:2-alpine` instead of `docker.io/library/caddy:2-alpine`) is an error that lists the declared keys, raised before any registry call, with the lockfile untouched. Missing images are still resolved and undeclared entries still pruned (steps 2 and 5). The output lists, for each refreshed image whose digests moved, the platforms concerned (`~ <key>`, then `<system> <old> -> <new>`), and counts the images already current. `--update` excludes `--check`; the image arguments require `--update`.
 
 **All or nothing:** if any image fails to resolve, every failure is reported, nothing is written and the exit code is 2.
 

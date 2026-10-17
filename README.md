@@ -163,11 +163,25 @@ $ git add pin-oci.lock
 
 Behaviour worth knowing:
 
-- **Only missing images are resolved.** An entry already in the lockfile for your platform
-  is never re-resolved, so a moving tag (`latest`, `v3`) does not change under you.
+- **A plain `lock` only resolves missing images.** An entry already in the lockfile for your
+  platform is never re-resolved (unless you pass `--update`), so a moving tag (`latest`, `v3`) does not change under you.
   Running `pin-oci lock` on an up-to-date lockfile does nothing and does not touch the file.
-- **To refresh an image**, delete its entry from `pin-oci.lock` (or the whole file) and run
-  `pin-oci lock` again.
+- **To refresh images**, use `--update`: it moves each tag to its current digests and
+  rewrites the entry for every platform.
+
+  ```console
+  $ pin-oci lock --update --flake .#myhost                                   # every image
+  $ pin-oci lock --update --flake .#myhost docker.io/library/caddy:2-alpine  # one image
+  pin-oci: wrote ./pin-oci.lock (2 image(s))
+    ~ docker.io/library/caddy:2-alpine
+        x86_64-linux sha256:173b26306d71… -> sha256:eeeeeeeeeeee…
+    = 1 image(s) already current
+  ```
+
+  Name an image by its **canonical key** (the key in `pin-oci.lock`, see
+  [Image references](#image-references)): `caddy:2-alpine` is refused, and the error lists
+  the declared keys. Nothing is written if any image fails. `--update` cannot be combined
+  with `--check`.
 - **Stale entries are removed:** images no longer declared disappear from the lockfile.
 - **All or nothing.** If any image fails to resolve, every failure is listed, the lockfile
   is left untouched and the exit code is 2.
