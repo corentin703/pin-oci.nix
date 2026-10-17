@@ -199,6 +199,13 @@ in
       expected = lib.genAttrs [ "bad name" "-lead" "a/b" "" "_x" ] (_: [ true ]);
     };
     # ---- container ordering ----
+    testStorePathBindMountIsEvaluable = {
+      expr = resourceUnits (
+        (withDb { volumes = [ "${builtins.toFile "conf" "x"}:/etc/conf:ro" ]; })
+        .systemd.services.podman-db.requires
+      );
+      expected = [ ];
+    };
     testContainerIsOrderedAfterItsNetworkAndVolume = {
       expr = orderingOf (withDb {
         volumes = [ "postgres_data:/var/lib/postgresql/data" ];

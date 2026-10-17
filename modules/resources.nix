@@ -16,7 +16,8 @@ rec {
     if csv != null then builtins.elemAt csv 1 else builtins.head (lib.splitString ":" value);
 
   # Source of a `volumes` entry "src:dst[:opts]".
-  volumeSource = entry: builtins.head (lib.splitString ":" entry);
+  volumeSource =
+    entry: builtins.head (lib.splitString ":" (builtins.unsafeDiscardStringContext entry));
 
   # Networks from `--network=x`, `--net=x` and the two-element form `--network x`.
   networksFromExtraOptions =

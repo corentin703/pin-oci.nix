@@ -86,6 +86,16 @@ in
         "bare"
       ];
     };
+    testVolumeSourceDropsStoreContext = {
+      expr = builtins.hasContext (r.volumeSource "${builtins.toFile "conf" "x"}:/etc/conf:ro");
+      expected = false;
+    };
+    testRenameVolumeEntryKeepsStoreContext = {
+      expr = builtins.hasContext (
+        r.renameVolumeEntry lib.id "${builtins.toFile "conf" "x"}:/etc/conf:ro"
+      );
+      expected = true;
+    };
     testNetworksFromExtraOptions = {
       expr = r.networksFromExtraOptions [
         "--cap-add=NET_ADMIN"
