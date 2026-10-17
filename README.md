@@ -51,24 +51,46 @@ Add the flake as an input. `follows` keeps the module aligned with your nixpkgs:
 The CLI is `pin-oci.packages.<system>.default`. Run it with `nix run github:cprag/pin-oci.nix -- <args>`
 or add it to `environment.systemPackages` / your dev shell.
 
-### Binary cache (optional)
-
-CI pushes `pin-oci` to a public Cachix cache. Without it, the CLI is built from source
-(Rust toolchain included). In your NixOS configuration:
-
-```nix
-nix.settings = {
-  extra-substituters = [ "https://pin-oci.cachix.org" ];
-  extra-trusted-public-keys = [ "pin-oci.cachix.org-1:rnJNoJhMLyEkTckqap7U3sTpic1xvACQlpSNqFHTPys=" ];
-};
-```
-
-The flake also carries this in `nixConfig`, which `nix run` / `nix build` on the flake offer
-to apply (`--accept-flake-config`). A flake input's `nixConfig` is ignored when you evaluate
-your own system, hence the setting above.
-
 It needs `nix` and `skopeo` at run time. The packaged binary already carries `skopeo` in
 its `PATH`.
+
+#### Binary cache (optional)
+
+CI builds `pin-oci` and pushes it to a public [Cachix](https://pin-oci.cachix.org) cache.
+Without the cache, Nix builds the CLI from source (Rust toolchain included). Declare it once
+in your NixOS configuration, before the first rebuild that uses the package:
+
+```nix
+{
+  nix.settings = {
+    extra-substituters = [ "https://pin-oci.cachix.org" ];
+    extra-trusted-public-keys = [
+      "pin-oci.cachix.org-1:rnJNoJhMLyEkTckqap7U3sTpic1xvACQlpSNqFHTPys="
+    ];
+  };
+}
+```
+
+Use the `extra-` forms: they add to `cache.nixos.org` instead of replacing it.
+
+- **Not on NixOS** (Nix on another distribution or macOS): put the same two lines in
+  `/etc/nix/nix.conf`, without the `nix.settings` wrapper, then restart the daemon.
+  ```text
+  extra-substituters = https://pin-oci.cachix.org
+  extra-trusted-public-keys = pin-oci.cachix.org-1:rnJNoJhMLyEkTckqap7U3sTpic1xvACQlpSNqFHTPys=
+  ```
+- **One-off, without touching your configuration:**
+  `nix run --accept-flake-config github:cprag/pin-oci.nix -- <args>`. The flake carries the
+  cache in its `nixConfig`, and `--accept-flake-config` trusts it for that command only.
+  A flake input's `nixConfig` is ignored when you evaluate your own system, hence the
+  `nix.settings` block above.
+- **Check that it is used:** `nix build github:cprag/pin-oci.nix --dry-run` lists the paths
+  it would fetch (`will be fetched from 'https://pin-oci.cachix.org'`) instead of built.
+  If it says `will be built`, the cache is not configured or not trusted, or the revision
+  was not pushed yet.
+
+The cache only holds what CI built on `x86_64-linux`. An `aarch64-linux` host builds the CLI
+itself.
 
 ### 2. Declare containers
 
@@ -412,6 +434,7 @@ registry).
 | Rust unit | `src/*.rs` (`#[cfg(test)]`) | lockfile model, platform mapping, manifest resolution, `check` / `lock` logic, with `nix` and `skopeo` behind traits and stubbed. |
 | Rust end-to-end | `tests/check_cli.rs`, `tests/lock_cli.rs` | The real binary against a fake `nix` and a fake `skopeo` placed in `PATH`. `tests/fixtures/` holds real `skopeo` outputs captured once. |
 | Nix modules | `tests/nix/default.nix`, `infra.nix`, `projects.nix`, `resources.nix` (run by `nix flake check`) | Reference normalization, module evaluation against fixture lockfiles (present / missing / wrong architecture / corrupt), the generated systemd units, laziness of `lockTargets`, container ordering, and the exact expression the CLI evaluates (`src/apply.nix`, shared with Rust). |
+| Binary cache | `tests/nix/binary-cache.nix` | The flake's `nixConfig`: substituter, public key, key matching its substituter, `extra-*` only (defaults never replaced). |
 | Generated scripts | `tests/nix/infra-scripts.nix` | The network and volume unit scripts executed against a stateful fake backend: idempotence, flags, recreation, failure propagation. |
 | NixOS VM | `tests/nix/vm-infra.nix`, `vm-projects.nix` | Real `podman` and `docker` in a VM: resources created at boot, flags applied, units idempotent, container units ordered after their resources; for projects, prefixed and external resources, `dependsOn` ordering, and services resolving each other by bare name on the default network. Needs KVM (`system-features = kvm nixos-test`). |
 
