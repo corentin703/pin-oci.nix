@@ -525,3 +525,42 @@ fn check_reports_a_locked_image_to_pull_that_has_no_hash() {
             || stderr(&out).contains("no nixHash")
     );
 }
+
+#[test]
+fn update_dry_shows_the_moved_digests_and_leaves_the_lockfile_byte_identical() {
+    let fx = Fixture::new("update-dry");
+    fx.nix("x86_64-linux", &[CADDY]);
+    fx.skopeo();
+    assert_eq!(fx.run("lock").status.code(), Some(0));
+    let before = fs::read(fx.lockfile()).unwrap();
+
+    fx.move_caddy_tag();
+    let out = fx.lock_with(&["update", "--dry"]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
+    assert!(stdout.contains("dry run, nothing written"), "{stdout}");
+    assert!(
+        stdout.contains("sha256:173b26306d71… -> sha256:eeeeeeeeeeee…"),
+        "{stdout}"
+    );
+    assert_eq!(fs::read(fx.lockfile()).unwrap(), before);
+
+    // The same command without --dry applies exactly that.
+    assert_eq!(fx.lock_with(&["update"]).status.code(), Some(0));
+    assert!(fs::read_to_string(fx.lockfile())
+        .unwrap()
+        .contains(NEW_AMD64));
+}
+
+#[test]
+fn update_dry_does_not_hash_images_to_pull() {
+    let fx = Fixture::new("update-dry-pull");
+    fx.nix_pulling("x86_64-linux", &[CADDY], SRI);
+    fx.skopeo();
+
+    let out = fx.lock_with(&["update", "--dry"]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert!(!fx.skopeo_log().contains(" copy "), "no image fetched");
+    assert!(!fx.nix_log().contains("hash file"));
+    assert!(!fx.lockfile().exists());
+}

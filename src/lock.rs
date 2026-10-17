@@ -41,6 +41,10 @@ pub(crate) struct Outcome {
     /// `(image, system, hash)` computed for images pulled into the store.
     hashed: Vec<(String, String, String)>,
     written: bool,
+    /// Dry run: nothing was written, whatever `changed` says.
+    dry: bool,
+    /// Whether the lockfile content differs from what is on disk.
+    changed: bool,
 }
 
 fn short(digest: Option<&str>) -> String {
@@ -68,7 +72,16 @@ fn changes(old: &Image, new: &Image) -> Vec<Change> {
 
 impl Outcome {
     pub(crate) fn message(&self) -> String {
-        if !self.written {
+        if self.dry && !self.changed {
+            return format!(
+                "pin-oci: dry run: {} would stay up to date for '{}' ({} image(s)){}",
+                self.file.display(),
+                self.systems,
+                self.total,
+                self.skipped_note
+            );
+        }
+        if !self.dry && !self.written {
             return format!(
                 "pin-oci: {} already up to date for '{}' ({} image(s)){}",
                 self.file.display(),
@@ -108,7 +121,12 @@ impl Outcome {
             n => format!("\n  = {n} image(s) already current"),
         };
         format!(
-            "pin-oci: wrote {} ({} image(s)){}{}{}{}{}{}",
+            "pin-oci: {} {} ({} image(s)){}{}{}{}{}{}",
+            if self.dry {
+                "dry run, nothing written; would write"
+            } else {
+                "wrote"
+            },
             self.file.display(),
             self.total,
             list("+", &self.resolved),
@@ -195,6 +213,29 @@ pub(crate) fn lock(
     file: Option<&Path>,
     refresh: &Refresh,
 ) -> Result<Outcome, LockError> {
+    run(evaluator, runtime, flake, file, refresh, false)
+}
+
+/// Same resolution as `lock`, but the lockfile is never written and no image is fetched to
+/// compute a `nixHash`: images pulled into the store are not looked at.
+pub(crate) fn dry_run(
+    evaluator: &dyn Evaluator,
+    runtime: &dyn Runtime,
+    flake: &str,
+    file: Option<&Path>,
+    refresh: &Refresh,
+) -> Result<Outcome, LockError> {
+    run(evaluator, runtime, flake, file, refresh, true)
+}
+
+fn run(
+    evaluator: &dyn Evaluator,
+    runtime: &dyn Runtime,
+    flake: &str,
+    file: Option<&Path>,
+    refresh: &Refresh,
+    dry: bool,
+) -> Result<Outcome, LockError> {
     let file = match file {
         Some(file) => file.to_path_buf(),
         None => nix::flake_root(flake)
@@ -274,7 +315,7 @@ pub(crate) fn lock(
     let mut hashed = Vec::new();
     let mut hash_errors = Vec::new();
     for (key, systems) in &declared.systems {
-        if !declared.targets[key].pull_image {
+        if dry || !declared.targets[key].pull_image {
             continue;
         }
         let Some(image) = lockfile.get_mut(key) else {
@@ -300,7 +341,9 @@ pub(crate) fn lock(
         return Err(LockError::NixHash(hash_errors));
     }
     let pruned = lockfile.prune(|key| declared.targets.contains_key(key));
-    let written = lockfile.write(&file).map_err(LockError::Lockfile)?;
+    let changed =
+        std::fs::read_to_string(&file).map_or(true, |current| current != lockfile.to_json());
+    let written = !dry && lockfile.write(&file).map_err(LockError::Lockfile)?;
 
     Ok(Outcome {
         file,
@@ -313,6 +356,8 @@ pub(crate) fn lock(
         pruned,
         hashed,
         written,
+        dry,
+        changed,
     })
 }
 
@@ -986,5 +1031,85 @@ mod tests {
             after.get(CADDY).unwrap().nix_hash("aarch64-linux"),
             Some(SRI_B)
         );
+    }
+
+    #[test]
+    fn dry_update_reports_the_moves_of_the_real_update_and_writes_nothing() {
+        let dir = locked_dir("dry-update");
+        let path = dir.join(LOCKFILE_NAME);
+        let before = std::fs::read(&path).unwrap();
+        let ev = StubEvaluator::ok(&declared("x86_64-linux", &[CADDY, SOLO]));
+
+        let dry = dry_run(&ev, &moved_runtime(), &flake(&dir), None, &Refresh::All).unwrap();
+        assert!(!dry.written && dry.dry && dry.changed);
+        assert_eq!(std::fs::read(&path).unwrap(), before, "byte for byte");
+        let message = dry.message();
+        assert!(message.contains("dry run, nothing written"), "{message}");
+        assert!(message.contains(&format!("~ {CADDY}")), "{message}");
+        assert!(message.contains("x86_64-linux sha256:173b26306d71… -> sha256:eeeeeeeeeeee…"));
+
+        let real = lock(&ev, &moved_runtime(), &flake(&dir), None, &Refresh::All).unwrap();
+        assert_eq!(dry.updated, real.updated, "the same changes, then applied");
+        assert_ne!(std::fs::read(&path).unwrap(), before);
+    }
+
+    #[test]
+    fn dry_update_with_nothing_moving_says_so_and_still_writes_nothing() {
+        let dir = locked_dir("dry-current");
+        let before = std::fs::read(dir.join(LOCKFILE_NAME)).unwrap();
+        let ev = StubEvaluator::ok(&declared("x86_64-linux", &[CADDY, SOLO]));
+
+        let dry = dry_run(&ev, &runtime(), &flake(&dir), None, &Refresh::All).unwrap();
+        assert!(!dry.changed && !dry.written);
+        assert!(dry.message().contains("would stay up to date"));
+        assert_eq!(std::fs::read(dir.join(LOCKFILE_NAME)).unwrap(), before);
+    }
+
+    #[test]
+    fn dry_run_never_creates_the_lockfile_and_still_reports_additions_and_prunes() {
+        let dir = temp_dir("dry-create");
+        let ev = StubEvaluator::ok(&declared("x86_64-linux", &[CADDY]));
+        let dry = dry_run(&ev, &runtime(), &flake(&dir), None, &Refresh::Missing).unwrap();
+        assert!(dry.changed && dry.resolved == vec![CADDY]);
+        assert!(!dir.join(LOCKFILE_NAME).exists());
+
+        let dir = locked_dir("dry-prune");
+        let before = std::fs::read(dir.join(LOCKFILE_NAME)).unwrap();
+        let ev = StubEvaluator::ok(&declared("x86_64-linux", &[CADDY]));
+        let dry = dry_run(&ev, &runtime(), &flake(&dir), None, &Refresh::All).unwrap();
+        assert_eq!(dry.pruned, vec![SOLO]);
+        assert_eq!(std::fs::read(dir.join(LOCKFILE_NAME)).unwrap(), before);
+    }
+
+    #[test]
+    fn dry_run_does_not_fetch_images_to_pull() {
+        let dir = temp_dir("dry-pull");
+        let ev = StubEvaluator::ok(&declared_pull("x86_64-linux", &[CADDY], &[CADDY]));
+        // The stub panics on an unexpected `archive_hash`: none must be asked.
+        let rt = runtime();
+        let dry = dry_run(&ev, &rt, &flake(&dir), None, &Refresh::Missing).unwrap();
+        assert!(rt.hash_calls.borrow().is_empty() && dry.hashed.is_empty());
+        assert!(!dir.join(LOCKFILE_NAME).exists());
+    }
+
+    #[test]
+    fn dry_run_keeps_the_errors_of_the_real_run() {
+        let dir = locked_dir("dry-errors");
+        let before = std::fs::read(dir.join(LOCKFILE_NAME)).unwrap();
+        let ev = StubEvaluator::ok(&declared("x86_64-linux", &[CADDY]));
+        let err = dry_run(
+            &ev,
+            &runtime(),
+            &flake(&dir),
+            None,
+            &Refresh::Only(vec!["caddy:2-alpine".to_owned()]),
+        )
+        .unwrap_err();
+        assert!(matches!(err, LockError::UnknownImages { .. }));
+
+        let ev = StubEvaluator::ok(&declared("x86_64-linux", &["docker.io/library/nope:1"]));
+        let err = dry_run(&ev, &runtime(), &flake(&dir), None, &Refresh::Missing).unwrap_err();
+        assert!(matches!(err, LockError::Resolution(_)));
+        assert_eq!(std::fs::read(dir.join(LOCKFILE_NAME)).unwrap(), before);
     }
 }

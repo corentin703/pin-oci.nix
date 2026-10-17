@@ -218,6 +218,9 @@ Behaviour worth knowing:
   Name an image by its **canonical key** (the key in `pin-oci.lock`, see
   [Image references](#image-references)): `caddy:2-alpine` is refused, and the error lists
   the declared keys. Nothing is written if any image fails.
+  Add `--dry` to see what would move without writing the lockfile
+  (`pin-oci lock update --dry --flake .#myhost`); images pulled into the store are not hashed in
+  that mode, so nothing is downloaded.
 - **Stale entries are removed:** images no longer declared disappear from the lockfile.
 - **All or nothing.** If any image fails to resolve, every failure is listed, the lockfile
   is left untouched and the exit code is 2.

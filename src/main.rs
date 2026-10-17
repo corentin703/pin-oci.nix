@@ -64,6 +64,10 @@ enum LockAction {
         /// Canonical keys of the images to refresh, as in pin-oci.lock
         #[arg(value_name = "IMAGE")]
         images: Vec<String>,
+        /// Show what would change without writing the lockfile; images pulled into the store
+        /// are not hashed
+        #[arg(long)]
+        dry: bool,
     },
     /// List declared and locked images with their status for the host platform
     List,
@@ -80,14 +84,14 @@ fn main() -> ExitCode {
             file,
             action,
         } => match action {
-            None => run_lock(&flake, file.as_deref(), &lock::Refresh::Missing),
-            Some(LockAction::Update { images }) => {
+            None => run_lock(&flake, file.as_deref(), &lock::Refresh::Missing, false),
+            Some(LockAction::Update { images, dry }) => {
                 let refresh = if images.is_empty() {
                     lock::Refresh::All
                 } else {
                     lock::Refresh::Only(images)
                 };
-                run_lock(&flake, file.as_deref(), &refresh)
+                run_lock(&flake, file.as_deref(), &refresh, dry)
             }
             Some(LockAction::List) => run_list(&flake, file.as_deref()),
             Some(LockAction::Check) => run_check(&flake, file.as_deref()),
@@ -160,8 +164,9 @@ fn completions(shell: Shell, out: &mut dyn Write) {
     clap_complete::generate(shell, &mut Cli::command(), "pin-oci", out);
 }
 
-fn run_lock(flake: &str, file: Option<&Path>, refresh: &lock::Refresh) -> ExitCode {
-    match lock::lock(&nix::NixCli, &registry::SkopeoCli, flake, file, refresh) {
+fn run_lock(flake: &str, file: Option<&Path>, refresh: &lock::Refresh, dry: bool) -> ExitCode {
+    let run = if dry { lock::dry_run } else { lock::lock };
+    match run(&nix::NixCli, &registry::SkopeoCli, flake, file, refresh) {
         Ok(outcome) => {
             println!("{}", outcome.message());
             ExitCode::SUCCESS
@@ -256,12 +261,12 @@ mod tests {
     #[test]
     fn update_takes_optional_canonical_keys() {
         let (_, _, action) = lock_args(&["lock", "update"]);
-        assert!(matches!(action, Some(LockAction::Update { images }) if images.is_empty()));
+        assert!(matches!(action, Some(LockAction::Update { images, .. }) if images.is_empty()));
 
         let (_, _, action) =
             lock_args(&["lock", "update", "docker.io/library/caddy:2-alpine", "b"]);
         match action {
-            Some(LockAction::Update { images }) => {
+            Some(LockAction::Update { images, .. }) => {
                 assert_eq!(images, ["docker.io/library/caddy:2-alpine", "b"]);
             }
             other => panic!("unexpected action: {other:?}"),
@@ -352,5 +357,24 @@ mod tests {
     #[test]
     fn missing_subcommand_is_rejected() {
         assert!(parse(&[]).is_err());
+    }
+
+    #[test]
+    fn dry_belongs_to_update_alone() {
+        let (_, _, action) = lock_args(&["lock", "update", "--dry"]);
+        assert!(matches!(action, Some(LockAction::Update { dry: true, .. })));
+        let (_, _, action) = lock_args(&["lock", "update"]);
+        assert!(matches!(
+            action,
+            Some(LockAction::Update { dry: false, .. })
+        ));
+
+        for args in [
+            &["lock", "--dry"][..],
+            &["lock", "list", "--dry"],
+            &["lock", "check", "--dry"],
+        ] {
+            assert!(parse(args).is_err(), "{args:?}");
+        }
     }
 }
