@@ -13,11 +13,13 @@ pub(crate) struct Report {
     skipped_note: String,
     declared: usize,
     missing: Vec<String>,
+    /// `(image, system)` to pull into the store with no `nixHash` in the lockfile.
+    unhashed: Vec<(String, String)>,
 }
 
 impl Report {
     pub(crate) fn is_in_sync(&self) -> bool {
-        self.missing.is_empty()
+        self.missing.is_empty() && self.unhashed.is_empty()
     }
 
     pub(crate) fn message(&self) -> String {
@@ -30,7 +32,16 @@ impl Report {
                 self.skipped_note
             );
         }
-        let list: String = self.missing.iter().map(|k| format!("\n  - {k}")).collect();
+        let list: String = self
+            .missing
+            .iter()
+            .map(|k| format!("\n  - {k}"))
+            .chain(
+                self.unhashed
+                    .iter()
+                    .map(|(k, system)| format!("\n  - {k}: no nixHash for {system}")),
+            )
+            .collect();
         format!(
             "pin-oci: lockfile out of sync for '{}' ({}):{list}\n\nRun: pin-oci lock{}",
             self.systems,
@@ -75,12 +86,14 @@ pub(crate) fn check(
     let declared = nix::declared(evaluator, flake).map_err(CheckError::Nix)?;
     let lock = Lockfile::read(&file).map_err(CheckError::Lockfile)?;
     let missing = declared.unlocked(&lock);
+    let unhashed = declared.unhashed(&lock);
     Ok(Report {
         file,
         systems: declared.systems_label(),
         skipped_note: declared.skipped_note(),
         declared: declared.targets.len(),
         missing,
+        unhashed,
     })
 }
 
@@ -225,5 +238,48 @@ mod tests {
             "b".repeat(64)
         ))).unwrap();
         assert!(check(&two_hosts(), ".", Some(&file)).unwrap().is_in_sync());
+    }
+
+    fn pull_declared() -> String {
+        format!(
+            r#"{{"system":"x86_64-linux","targets":{{"{KEY}":{{"registry":"docker.io","repository":"library/caddy","tag":"2-alpine","pullImage":true}}}}}}"#
+        )
+    }
+
+    #[test]
+    fn an_image_to_pull_without_nix_hash_is_out_of_sync() {
+        let dir = temp_dir("check-unhashed");
+        std::fs::write(dir.join(LOCKFILE_NAME), lock_json("x86_64-linux")).unwrap();
+        let stub = StubEvaluator::ok(&pull_declared());
+
+        let report = check(&stub, &format!("{}#box", dir.display()), None).unwrap();
+        assert!(!report.is_in_sync());
+        let msg = report.message();
+        assert!(
+            msg.contains(KEY) && msg.contains("no nixHash for x86_64-linux"),
+            "{msg}"
+        );
+        assert!(msg.contains("pin-oci lock"));
+    }
+
+    #[test]
+    fn an_image_to_pull_with_its_nix_hash_is_in_sync_and_one_not_pulled_needs_none() {
+        let dir = temp_dir("check-hashed");
+        let hashed = lock_json("x86_64-linux").replace(
+            r#""architecture":"amd64""#,
+            r#""architecture":"amd64","nixHash":"sha256-AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=""#,
+        );
+        std::fs::write(dir.join(LOCKFILE_NAME), hashed).unwrap();
+        let flake = format!("{}#box", dir.display());
+        assert!(check(&StubEvaluator::ok(&pull_declared()), &flake, None)
+            .unwrap()
+            .is_in_sync());
+
+        std::fs::write(dir.join(LOCKFILE_NAME), lock_json("x86_64-linux")).unwrap();
+        assert!(
+            check(&StubEvaluator::ok(&declared_json(&[KEY])), &flake, None)
+                .unwrap()
+                .is_in_sync()
+        );
     }
 }

@@ -3,6 +3,7 @@ use std::path::PathBuf;
 
 use std::collections::HashMap;
 
+use crate::lockfile::PullSpec;
 use crate::nix::{Evaluator, NixError};
 use crate::registry::{RegistryError, Runtime};
 
@@ -89,6 +90,10 @@ pub(crate) struct StubRuntime {
     responses: HashMap<String, Result<String, String>>,
     /// Joined arguments of every call.
     pub(crate) calls: RefCell<Vec<String>>,
+    /// `<name>@<digest>` -> archive hash.
+    hashes: HashMap<String, Result<String, String>>,
+    /// `<name>@<digest>` of every `archive_hash` call.
+    pub(crate) hash_calls: RefCell<Vec<String>>,
 }
 
 impl StubRuntime {
@@ -108,7 +113,31 @@ impl StubRuntime {
     }
 }
 
+impl StubRuntime {
+    pub(crate) fn hashing(mut self, name_digest: &str, hash: &str) -> Self {
+        self.hashes
+            .insert(name_digest.to_owned(), Ok(hash.to_owned()));
+        self
+    }
+
+    pub(crate) fn hash_failing(mut self, name_digest: &str, stderr: &str) -> Self {
+        self.hashes
+            .insert(name_digest.to_owned(), Err(stderr.to_owned()));
+        self
+    }
+}
+
 impl Runtime for StubRuntime {
+    fn archive_hash(&self, spec: &PullSpec) -> Result<String, RegistryError> {
+        let key = format!("{}@{}", spec.name, spec.digest);
+        self.hash_calls.borrow_mut().push(key.clone());
+        match self.hashes.get(&key) {
+            Some(Ok(hash)) => Ok(hash.clone()),
+            Some(Err(stderr)) => Err(RegistryError::NixHash(stderr.clone())),
+            None => panic!("unexpected archive hash: {key}"),
+        }
+    }
+
     fn skopeo(&self, args: &[&str]) -> Result<String, RegistryError> {
         let key = args.join(" ");
         self.calls.borrow_mut().push(key.clone());

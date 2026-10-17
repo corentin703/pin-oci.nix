@@ -48,6 +48,35 @@ impl Fixture {
         self.executable("nix", &format!("printf '%s' '{json}'"));
     }
 
+    /// Like `nix`, but the declared images are pulled into the store, and `nix hash file`
+    /// answers with `hash` (the sha256 of the file it is given, in the real binary).
+    fn nix_pulling(&self, system: &str, targets: &[&str], hash: &str) {
+        let targets: Vec<String> = targets
+            .iter()
+            .map(|t| t.replace('}', r#","pullImage":true}"#))
+            .collect();
+        let json = format!(
+            r#"{{"system":"{system}","targets":{{{}}}}}"#,
+            targets.join(",")
+        );
+        let log = self.dir.join("nix.log");
+        self.executable(
+            "nix",
+            &format!(
+                r#"echo "$*" >> '{log}'
+case "$1" in
+  hash) [ -f "$6" ] || {{ echo "no archive to hash: $6" >&2; exit 1; }}; echo '{hash}' ;;
+  *) printf '%s' '{json}' ;;
+esac"#,
+                log = log.display()
+            ),
+        );
+    }
+
+    fn nix_log(&self) -> String {
+        fs::read_to_string(self.dir.join("nix.log")).unwrap_or_default()
+    }
+
     fn skopeo(&self) {
         self.skopeo_serving(&format!("{FIXTURES}/skopeo-index.json"));
     }
@@ -65,6 +94,7 @@ case "$*" in
 esac
 emit() {{ while IFS= read -r line || [ -n "$line" ]; do printf '%s\n' "$line"; done < "$1"; }}
 case "$*" in
+  *" copy "*) for last; do :; done; dest="${{last#docker-archive://}}"; dest="${{dest%%:*}}"; echo archive > "$dest" ;;
   *--raw*/library/caddy:*) emit '{caddy}' ;;
   *--raw*/acme/solo:*) emit '{f}/skopeo-single-raw.json' ;;
   *--no-tags*/acme/solo:*) emit '{f}/skopeo-single-inspect.json' ;;
@@ -428,4 +458,70 @@ esac"#,
     let out = fx.bare(&[]);
     assert_eq!(out.status.code(), Some(2));
     assert!(stderr(&out).contains("uses pin-oci"), "{}", stderr(&out));
+}
+
+const SRI: &str = "sha256-AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=";
+
+#[test]
+fn lock_hashes_an_image_to_pull_with_the_command_pull_image_runs_then_check_passes() {
+    let fx = Fixture::new("pull");
+    fx.nix_pulling("x86_64-linux", &[CADDY, SOLO], SRI);
+    fx.skopeo();
+
+    assert_eq!(fx.check().status.code(), Some(1), "unlocked before lock");
+    let out = fx.run("lock");
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+
+    let lock = fs::read_to_string(fx.lockfile()).unwrap();
+    assert_eq!(lock.matches("nixHash").count(), 2, "{lock}");
+    assert!(lock.contains(SRI));
+    let log = fx.skopeo_log();
+    let copy = log
+        .lines()
+        .find(|l| l.contains(" copy ") && l.contains("library/caddy"))
+        .unwrap_or_else(|| panic!("no skopeo copy in:\n{log}"));
+    assert!(
+        copy.contains("--override-os linux --override-arch amd64 copy")
+            && copy.contains(&format!("docker://docker.io/library/caddy@{AMD64}"))
+            && copy.ends_with(":docker.io/library/caddy:2-alpine")
+            && copy.contains("docker-archive://"),
+        "{copy}"
+    );
+    assert!(fx.nix_log().contains("hash file --type sha256 --sri"));
+    assert_eq!(fx.check().status.code(), Some(0));
+
+    // Locked and hashed: a second run fetches nothing.
+    let calls = fx.skopeo_calls();
+    let again = fx.run("lock");
+    assert_eq!(again.status.code(), Some(0));
+    assert_eq!(fx.skopeo_calls(), calls);
+}
+
+#[test]
+fn a_failing_hash_leaves_the_lockfile_absent_and_reports_the_image() {
+    let fx = Fixture::new("pull-fail");
+    fx.nix_pulling("x86_64-linux", &[CADDY], "not-a-hash");
+    fx.skopeo();
+
+    let out = fx.run("lock");
+    assert_eq!(out.status.code(), Some(2), "{}", stderr(&out));
+    assert!(stderr(&out).contains("docker.io/library/caddy:2-alpine"));
+    assert!(stderr(&out).contains("nix hash"), "{}", stderr(&out));
+    assert!(!fx.lockfile().exists());
+}
+
+#[test]
+fn check_reports_a_locked_image_to_pull_that_has_no_hash() {
+    let fx = Fixture::new("pull-check");
+    fx.nix("x86_64-linux", &[CADDY]);
+    fx.skopeo();
+    assert_eq!(fx.run("lock").status.code(), Some(0));
+
+    fx.nix_pulling("x86_64-linux", &[CADDY], SRI);
+    let out = fx.check();
+    assert_eq!(out.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&out.stdout).contains("no nixHash")
+            || stderr(&out).contains("no nixHash")
+    );
 }

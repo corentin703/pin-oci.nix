@@ -42,6 +42,39 @@ impl Image {
         self.arch.contains_key(system)
     }
 
+    pub(crate) fn nix_hash(&self, system: &str) -> Option<&str> {
+        self.arch.get(system).and_then(Platform::nix_hash)
+    }
+
+    /// What `dockerTools.pullImage` is given for `system`.
+    pub(crate) fn pull_spec(&self, system: &str) -> Option<PullSpec> {
+        let platform = self.arch.get(system)?;
+        Some(PullSpec {
+            name: format!("{}/{}", self.registry, self.repository),
+            tag: self.tag.clone(),
+            digest: platform.digest.clone(),
+            os: platform.os.clone(),
+            architecture: platform.architecture.clone(),
+        })
+    }
+
+    /// Records the hash computed for `system`; false when the image has no such platform.
+    pub(crate) fn set_nix_hash(&mut self, system: &str, hash: String) -> bool {
+        self.arch
+            .get_mut(system)
+            .map(|p| p.nix_hash = Some(hash))
+            .is_some()
+    }
+
+    /// Keeps the hashes of `old` for the platforms whose digest did not move.
+    pub(crate) fn inherit_nix_hashes(&mut self, old: &Image) {
+        for (system, platform) in &mut self.arch {
+            if let Some(old) = old.arch.get(system).filter(|o| o.digest == platform.digest) {
+                platform.nix_hash = old.nix_hash.clone();
+            }
+        }
+    }
+
     pub(crate) fn digest(&self, system: &str) -> Option<&str> {
         self.digests()
             .find_map(|(s, digest)| (s == system).then_some(digest))
@@ -69,12 +102,26 @@ impl Image {
     }
 }
 
+/// One platform of an image, as `dockerTools.pullImage` fetches it.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct PullSpec {
+    /// `<registry>/<repository>`
+    pub(crate) name: String,
+    pub(crate) tag: String,
+    pub(crate) digest: String,
+    pub(crate) os: String,
+    pub(crate) architecture: String,
+}
+
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Platform {
     digest: String,
     os: String,
     architecture: String,
+    /// SRI hash of the `dockerTools.pullImage` archive; only for images pulled into the store.
+    #[serde(rename = "nixHash", default, skip_serializing_if = "Option::is_none")]
+    nix_hash: Option<String>,
 }
 
 impl Platform {
@@ -83,7 +130,12 @@ impl Platform {
             digest,
             os,
             architecture,
+            nix_hash: None,
         }
+    }
+
+    pub(crate) fn nix_hash(&self) -> Option<&str> {
+        self.nix_hash.as_deref()
     }
 }
 
@@ -99,6 +151,11 @@ pub(crate) enum LockfileError {
         image: String,
         system: String,
         digest: String,
+    },
+    InvalidNixHash {
+        image: String,
+        system: String,
+        hash: String,
     },
 }
 
@@ -119,6 +176,13 @@ impl fmt::Display for LockfileError {
                 digest,
             } => {
                 write!(f, "invalid digest '{digest}' for {image} ({system})")
+            }
+            Self::InvalidNixHash {
+                image,
+                system,
+                hash,
+            } => {
+                write!(f, "invalid nixHash '{hash}' for {image} ({system})")
             }
         }
     }
@@ -146,6 +210,13 @@ impl Lockfile {
                         image: image.clone(),
                         system: system.clone(),
                         digest: platform.digest.clone(),
+                    });
+                }
+                if let Some(hash) = platform.nix_hash.as_deref().filter(|h| !is_valid_sri(h)) {
+                    return Err(LockfileError::InvalidNixHash {
+                        image: image.clone(),
+                        system: system.clone(),
+                        hash: hash.to_owned(),
                     });
                 }
             }
@@ -187,6 +258,10 @@ impl Lockfile {
 
     pub(crate) fn get(&self, key: &str) -> Option<&Image> {
         self.images.get(key)
+    }
+
+    pub(crate) fn get_mut(&mut self, key: &str) -> Option<&mut Image> {
+        self.images.get_mut(key)
     }
 
     pub(crate) fn insert(&mut self, key: String, image: Image) {
@@ -257,6 +332,19 @@ pub(crate) fn nix_system(
 pub(crate) fn is_valid_digest(digest: &str) -> bool {
     digest.strip_prefix("sha256:").is_some_and(|hex| {
         hex.len() == 64 && hex.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+    })
+}
+
+/// `sha256-<base64 of 32 bytes>`, the form Nix takes as `sha256` (44 base64 characters, one `=`).
+pub(crate) fn is_valid_sri(hash: &str) -> bool {
+    hash.strip_prefix("sha256-").is_some_and(|b64| {
+        b64.len() == 44
+            && b64.ends_with('=')
+            && b64[..43]
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'+' || b == b'/')
+            // 32 bytes leave 4 unused bits in the last character.
+            && matches!(b64.as_bytes()[42], b'A' | b'E' | b'I' | b'M' | b'Q' | b'U' | b'Y' | b'c' | b'g' | b'k' | b'o' | b's' | b'w' | b'0' | b'4' | b'8')
     })
 }
 
@@ -494,5 +582,51 @@ mod tests {
         lock.insert("k:1".into(), image("1", &["x86_64-linux"]));
         assert!(matches!(lock.write(&path), Err(LockfileError::Io { .. })));
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "previous");
+    }
+
+    const SRI: &str = "sha256-4Y35qO8RkPzUQ4kJmDIdq0EY3WR5G8wXfA9b2QpCnHk=";
+
+    #[test]
+    fn nix_hash_is_optional_roundtrips_and_is_omitted_when_absent() {
+        let without = Lockfile::parse(&sample("x86_64-linux")).unwrap();
+        assert!(!without.to_json().contains("nixHash"));
+
+        let json = sample("x86_64-linux").replace(
+            r#""architecture": "amd64" }"#,
+            &format!(r#""architecture": "amd64", "nixHash": "{SRI}" }}"#),
+        );
+        let with = Lockfile::parse(&json).unwrap();
+        let key = "docker.io/library/caddy:2-alpine";
+        assert_eq!(with.get(key).unwrap().nix_hash("x86_64-linux"), Some(SRI));
+        assert_eq!(Lockfile::parse(&with.to_json()).unwrap(), with);
+        let out = with.to_json();
+        assert!(out.find("\"architecture\"").unwrap() < out.find("\"nixHash\"").unwrap());
+    }
+
+    #[test]
+    fn rejects_malformed_nix_hashes() {
+        for bad in [
+            "",
+            "sha256-",
+            "sha256-abc=",
+            "sha512-4Y35qO8RkPzUQ4kJmDIdq0EY3WR5G8wXfA9b2QpCnHk=",
+            "4Y35qO8RkPzUQ4kJmDIdq0EY3WR5G8wXfA9b2QpCnHk=",
+            "sha256-4Y35qO8RkPzUQ4kJmDIdq0EY3WR5G8wXfA9b2QpCnHk",
+            "sha256-4Y35qO8RkPzUQ4kJmDIdq0EY3WR5G8wXfA9b2QpCnH!=",
+            "sha256-4Y35qO8RkPzUQ4kJmDIdq0EY3WR5G8wXfA9b2QpCnHl=",
+            HEX,
+        ] {
+            let json = sample("x86_64-linux").replace(
+                r#""architecture": "amd64" }"#,
+                &format!(r#""architecture": "amd64", "nixHash": "{bad}" }}"#),
+            );
+            assert!(
+                matches!(
+                    Lockfile::parse(&json),
+                    Err(LockfileError::InvalidNixHash { .. })
+                ),
+                "{bad}"
+            );
+        }
     }
 }

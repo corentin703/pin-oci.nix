@@ -13,6 +13,8 @@ pub(crate) enum Status {
     Locked,
     /// Declared, but with no entry for at least one of those platforms.
     Missing,
+    /// Locked, but pulled into the store and lacking the `nixHash` of a platform.
+    Unhashed,
     /// In the lockfile, no longer declared.
     Stale,
 }
@@ -22,6 +24,7 @@ impl Status {
         match self {
             Self::Locked => "locked",
             Self::Missing => "missing",
+            Self::Unhashed => "no-hash",
             Self::Stale => "stale",
         }
     }
@@ -165,12 +168,18 @@ pub(crate) fn list(
                     Some((system.clone(), digest.to_owned()))
                 })
                 .collect();
+            let unhashed = declared.targets[key].pull_image
+                && systems.iter().any(|system| {
+                    image.is_some_and(|i| i.has_system(system) && i.nix_hash(system).is_none())
+                });
             Entry {
                 key: key.to_owned(),
-                status: if digests.len() == systems.len() {
-                    Status::Locked
-                } else {
+                status: if digests.len() != systems.len() {
                     Status::Missing
+                } else if unhashed {
+                    Status::Unhashed
+                } else {
+                    Status::Locked
                 },
                 hosts: declared.hosts[key].iter().cloned().collect(),
                 digests,
@@ -439,5 +448,31 @@ mod tests {
             list(&ev, &flake(&dir), None),
             Err(ListError::Lockfile(_))
         ));
+    }
+
+    #[test]
+    fn an_image_to_pull_without_nix_hash_is_flagged_until_it_has_one() {
+        let dir = temp_dir("list-unhashed");
+        let declared = format!(
+            r#"{{"system":"x86_64-linux","targets":{{"{CADDY}":{{"registry":"r","repository":"p","tag":"t","pullImage":true}}}}}}"#
+        );
+        let ev = StubEvaluator::ok(&declared);
+
+        std::fs::write(
+            dir.join(LOCKFILE_NAME),
+            lock_json(&[(CADDY, "x86_64-linux", HEX)]),
+        )
+        .unwrap();
+        let listing = list(&ev, &flake(&dir), None).unwrap();
+        assert_eq!(statuses(&listing), [(CADDY, &Status::Unhashed)]);
+        assert!(listing.message().contains("no-hash"));
+
+        let hashed = lock_json(&[(CADDY, "x86_64-linux", HEX)]).replace(
+            r#""architecture":"amd64""#,
+            r#""architecture":"amd64","nixHash":"sha256-AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=""#,
+        );
+        std::fs::write(dir.join(LOCKFILE_NAME), hashed).unwrap();
+        let listing = list(&ev, &flake(&dir), None).unwrap();
+        assert_eq!(statuses(&listing), [(CADDY, &Status::Locked)]);
     }
 }

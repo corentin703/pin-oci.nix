@@ -156,6 +156,28 @@ Under the hood each container is lowered to
 `<registry>/<repository>@sha256:<digest of your platform>`. The backend is whatever
 `virtualisation.oci-containers.backend` says; pin-oci never starts containers itself.
 
+#### Fetching images into the Nix store (optional)
+
+By default the runtime pulls the image by digest. With `pullImage`, the module instead generates a
+`dockerTools.pullImage` from the lockfile, sets `imageFile` and runs the image under its
+`<registry>/<repository>:<tag>` name: the image is fetched at build time and verified by Nix.
+
+```nix
+virtualisation.pin-oci = {
+  pullImage = false;                       # default; true applies to every container
+  containers.web = {
+    image = "caddy:2-alpine";
+    pullImage = true;                      # per container, overrides the global default
+  };
+};
+```
+
+`pin-oci lock` and `pin-oci lock --update` then also record a `nixHash` for each platform of such
+images. Unlike the digest, it cannot be read from the registry: the CLI **downloads the image**
+once (and again only when its digest moves). A missing hash fails evaluation with the command to
+run, and `lock --check` / `lock --list` report it (`no-hash`). `pullImage` needs an image without a
+digest in its reference.
+
 ### 3. Lock
 
 From the flake root, resolve every image and write `pin-oci.lock`:
@@ -569,7 +591,7 @@ registry).
 | Completions | `tests/completions_cli.rs`, `tests/nix/completions.nix` | `pin-oci completions <shell>` for every shell (no `nix`, no `skopeo`, usage errors), and the package ships the bash, zsh and fish scripts, equal to what the packaged binary prints. |
 | Binary cache | `tests/nix/binary-cache.nix` | The flake's `nixConfig`: substituter, public key, key matching its substituter, `extra-*` only (defaults never replaced). |
 | Generated scripts | `tests/nix/infra-scripts.nix` | The network and volume unit scripts executed against a stateful fake backend: idempotence, flags, recreation, failure propagation. |
-| NixOS VM | `tests/nix/vm-infra.nix`, `vm-projects.nix` | Real `podman` and `docker` in a VM: resources created at boot, flags applied, units idempotent, container units ordered after their resources; for projects, prefixed and external resources, `dependsOn` ordering, and services resolving each other by bare name on the default network. Needs KVM (`system-features = kvm nixos-test`). |
+| NixOS VM | `tests/nix/vm-infra.nix`, `vm-projects.nix`, `vm-pull-image.nix` | Real `podman` and `docker` in a VM: resources created at boot, flags applied, units idempotent, container units ordered after their resources; for projects, prefixed and external resources, `dependsOn` ordering, and services resolving each other by bare name on the default network. Needs KVM (`system-features = kvm nixos-test`). |
 
 Run a single check, for instance:
 
@@ -578,6 +600,7 @@ $ nix build .#checks.x86_64-linux.module-tests -L   # fast, evaluation only
 $ nix build .#checks.x86_64-linux.infra-scripts -L
 $ nix build .#checks.x86_64-linux.vm-infra -L        # boots two VMs, about a minute
 $ nix build .#checks.x86_64-linux.vm-projects -L
+$ nix build .#checks.x86_64-linux.vm-pull-image -L
 ```
 
 When a test fails it prints the failing cases. To confirm a guarantee is really tested,

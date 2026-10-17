@@ -62,7 +62,16 @@ impl Declared {
                     .entry(key.clone())
                     .or_default()
                     .insert(host.clone());
-                out.targets.insert(key, target);
+                // Pulled by any host: every platform of the image then needs its hash.
+                let pull_image =
+                    target.pull_image || out.targets.get(&key).is_some_and(|t| t.pull_image);
+                out.targets.insert(
+                    key,
+                    Target {
+                        pull_image,
+                        ..target
+                    },
+                );
             }
         }
         out
@@ -78,6 +87,22 @@ impl Declared {
                     .any(|system| !lock.missing([key.as_str()], system).is_empty())
             })
             .map(|(key, _)| key.clone())
+            .collect()
+    }
+
+    /// `(key, system)` of the images to pull into the store whose lock entry has no `nixHash`
+    /// for that platform. Entries missing altogether are `unlocked`, not listed here.
+    pub(crate) fn unhashed(&self, lock: &Lockfile) -> Vec<(String, String)> {
+        self.systems
+            .iter()
+            .filter(|(key, _)| self.targets[*key].pull_image)
+            .flat_map(|(key, systems)| {
+                systems.iter().filter_map(move |system| {
+                    let image = lock.get(key)?;
+                    (image.has_system(system) && image.nix_hash(system).is_none())
+                        .then(|| (key.clone(), system.clone()))
+                })
+            })
             .collect()
     }
 
@@ -108,6 +133,9 @@ pub(crate) struct Target {
     pub(crate) registry: String,
     pub(crate) repository: String,
     pub(crate) tag: String,
+    /// Some container fetches the image into the Nix store: its archive hash is required.
+    #[serde(rename = "pullImage", default)]
+    pub(crate) pull_image: bool,
 }
 
 #[derive(Debug)]
@@ -269,7 +297,8 @@ mod tests {
             Target {
                 registry: "docker.io".into(),
                 repository: "library/a".into(),
-                tag: "1".into()
+                tag: "1".into(),
+                pull_image: false,
             }
         );
         let calls = stub.calls.borrow();
@@ -447,5 +476,47 @@ mod tests {
 
     fn parsed(json: &str) -> HostDeclared {
         serde_json::from_str(json).unwrap()
+    }
+
+    #[test]
+    fn pull_image_defaults_to_false_and_is_read_when_set() {
+        let stub = StubEvaluator::ok(
+            r##"{"system":"x86_64-linux","targets":{
+                "r/a:1":{"registry":"r","repository":"a","tag":"1"},
+                "r/b:1":{"registry":"r","repository":"b","tag":"1","pullImage":true}}}"##,
+        );
+        let got = declared(&stub, ".#box").unwrap();
+        assert!(!got.targets["r/a:1"].pull_image);
+        assert!(got.targets["r/b:1"].pull_image);
+        let bad = StubEvaluator::ok(
+            r##"{"system":"x","targets":{"a:1":{"registry":"r","repository":"p","tag":"t","pullImage":"yes"}}}"##,
+        );
+        assert!(matches!(declared(&bad, ".#box"), Err(NixError::Parse(_))));
+    }
+
+    #[test]
+    fn an_image_pulled_by_any_host_is_pulled_whatever_the_host_order() {
+        let host = |pull: bool| HostDeclared {
+            system: "x86_64-linux".into(),
+            targets: BTreeMap::from([(
+                "r/a:1".to_owned(),
+                Target {
+                    registry: "r".into(),
+                    repository: "a".into(),
+                    tag: "1".into(),
+                    pull_image: pull,
+                },
+            )]),
+        };
+        for order in [[true, false], [false, true]] {
+            let merged = Declared::merge(
+                order
+                    .iter()
+                    .enumerate()
+                    .map(|(i, pull)| (format!("h{i}"), Some(host(*pull))))
+                    .collect(),
+            );
+            assert!(merged.targets["r/a:1"].pull_image, "{order:?}");
+        }
     }
 }

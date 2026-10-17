@@ -26,14 +26,20 @@ let
 
   unpinned = lib.filterAttrs (_: c: !(parseRef c.image).pinned) cfg.containers;
 
+  wantsPull = c: if c.pullImage == null then cfg.pullImage else c.pullImage;
+
   # Consumed by the pin-oci CLI. MUST NOT depend on lockData.
-  lockTargets = lib.mapAttrs' (
-    _: c:
+  # `pullImage` is set when any container sharing the image pulls it into the store.
+  lockTargets = lib.mapAttrs (
+    key: group:
     let
-      r = parseRef c.image;
+      r = parseRef (builtins.head group).image;
     in
-    lib.nameValuePair r.key { inherit (r) registry repository tag; }
-  ) unpinned;
+    {
+      inherit (r) registry repository tag;
+      pullImage = lib.any wantsPull group;
+    }
+  ) (lib.groupBy (c: (parseRef c.image).key) (lib.attrValues unpinned));
 
   isMissing =
     key:
@@ -45,20 +51,45 @@ let
   missingKeys = lib.filter isMissing (builtins.attrNames lockTargets);
   formattedList = lib.concatMapStringsSep "\n  - " (k: k) missingKeys;
 
-  # Replace the floating tag by the locked digest.
+  pulledPinned = lib.filter (
+    n: (parseRef cfg.containers.${n}.image).pinned && wantsPull cfg.containers.${n}
+  ) (builtins.attrNames cfg.containers);
+
+  # Locked images that must be pulled into the store but carry no hash for this platform.
+  missingHashKeys = lib.filter (
+    key: lockTargets.${key}.pullImage && !(lockData.images.${key}.arch.${currentSystem} ? nixHash)
+  ) (lib.filter (key: !(lib.elem key missingKeys)) (builtins.attrNames lockTargets));
+
+  # Replace the floating tag by the locked digest, or by the image fetched into the store.
   resolveContainer =
     _: containerCfg:
     let
       r = parseRef containerCfg.image;
-      base = removeAttrs containerCfg [ "_module" ];
+      base = removeAttrs containerCfg [
+        "_module"
+        "pullImage"
+      ];
+      locked = lockData.images.${r.key}.arch.${currentSystem};
+      name = "${r.registry}/${r.repository}";
     in
     if r.pinned then
       base
-    else
+    else if wantsPull containerCfg then
       base
       // {
-        image = "${r.registry}/${r.repository}@${lockData.images.${r.key}.arch.${currentSystem}.digest}";
-      };
+        image = "${name}:${r.tag}";
+        imageFile = pkgs.dockerTools.pullImage {
+          imageName = name;
+          imageDigest = locked.digest;
+          sha256 = locked.nixHash;
+          finalImageName = name;
+          finalImageTag = r.tag;
+          inherit (locked) os;
+          arch = locked.architecture;
+        };
+      }
+    else
+      base // { image = "${name}@${locked.digest}"; };
 in
 {
   options.virtualisation.pin-oci = {
@@ -70,6 +101,16 @@ in
       description = ''
         Path to pin-oci.lock, at the flake root next to flake.lock.
         No default: set it to `./pin-oci.lock`, or `self + "/pin-oci.lock"`.
+      '';
+    };
+
+    pullImage = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = ''
+        Fetch every image into the Nix store at build time (`dockerTools.pullImage`) instead of
+        letting the runtime pull it by digest. Overridable per container with `pullImage`.
+        `pin-oci lock` then records the `nixHash` of each such image.
       '';
     };
 
@@ -115,10 +156,32 @@ in
               git add pin-oci.lock
           '';
         }
+        {
+          assertion = missingHashKeys == [ ];
+          message = ''
+
+            [pin-oci] Images pulled into the store have no nixHash for '${currentSystem}' in ${toString cfg.lockFile}:
+              - ${lib.concatStringsSep "\n  - " missingHashKeys}
+
+            Compute it with the command:
+              pin-oci lock
+          '';
+        }
+        {
+          assertion = pulledPinned == [ ];
+          message = ''
+
+            [pin-oci] pullImage needs an image without a digest (pin-oci pins it); these already carry one:
+              - ${lib.concatStringsSep "\n  - " pulledPinned}
+          '';
+        }
       ];
 
       virtualisation.oci-containers.containers =
-        if missingKeys == [ ] then lib.mapAttrs resolveContainer cfg.containers else { };
+        if missingKeys == [ ] && missingHashKeys == [ ] then
+          lib.mapAttrs resolveContainer cfg.containers
+        else
+          { };
     })
   ];
 }

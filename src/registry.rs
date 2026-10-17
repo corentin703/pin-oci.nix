@@ -1,23 +1,29 @@
 use std::collections::BTreeMap;
 use std::fmt;
 use std::io;
+use std::path::Path;
 use std::process::Command;
 
 use serde::Deserialize;
 
-use crate::lockfile::{is_valid_digest, nix_system, Image, Platform};
+use crate::lockfile::{is_valid_digest, is_valid_sri, nix_system, Image, Platform, PullSpec};
 use crate::nix::Target;
 
 #[derive(Debug)]
 pub(crate) enum RegistryError {
     Spawn(io::Error),
-    Failed { code: Option<i32>, stderr: String },
+    Failed {
+        code: Option<i32>,
+        stderr: String,
+    },
     Parse(serde_json::Error),
     InvalidDigest(String),
     UnsupportedPlatform(String),
     AmbiguousPlatform(String),
     NoSupportedPlatform,
     MissingHostPlatform(String),
+    /// `nix hash file` failed or printed something that is not a SRI hash.
+    NixHash(String),
 }
 
 impl fmt::Display for RegistryError {
@@ -34,6 +40,7 @@ impl fmt::Display for RegistryError {
             Self::AmbiguousPlatform(s) => write!(f, "several manifests match {s}"),
             Self::NoSupportedPlatform => write!(f, "no supported linux platform in the image"),
             Self::MissingHostPlatform(s) => write!(f, "no manifest for the host platform {s}"),
+            Self::NixHash(e) => write!(f, "cannot compute the nix hash: {}", e.trim_end()),
         }
     }
 }
@@ -43,6 +50,30 @@ impl std::error::Error for RegistryError {}
 /// Boundary around the `skopeo` binary, stubbed in tests.
 pub(crate) trait Runtime {
     fn skopeo(&self, args: &[&str]) -> Result<String, RegistryError>;
+
+    /// SRI hash of the archive `dockerTools.pullImage` would produce for `spec`: this is the
+    /// `sha256` Nix checks, and it cannot be known without fetching the image.
+    fn archive_hash(&self, spec: &PullSpec) -> Result<String, RegistryError>;
+}
+
+/// Arguments of the `skopeo copy` run by `dockerTools.pullImage`, writing to `dest`. The
+/// archive embeds `name:tag`, so they are part of what is hashed.
+fn copy_args(spec: &PullSpec, dest: &Path) -> Vec<String> {
+    vec![
+        "--insecure-policy".to_owned(),
+        "--override-os".to_owned(),
+        spec.os.clone(),
+        "--override-arch".to_owned(),
+        spec.architecture.clone(),
+        "copy".to_owned(),
+        format!("docker://{}@{}", spec.name, spec.digest),
+        format!(
+            "docker-archive://{}:{}:{}",
+            dest.display(),
+            spec.name,
+            spec.tag
+        ),
+    ]
 }
 
 pub(crate) struct SkopeoCli;
@@ -66,6 +97,45 @@ impl Runtime for SkopeoCli {
             });
         }
         Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+    }
+
+    fn archive_hash(&self, spec: &PullSpec) -> Result<String, RegistryError> {
+        let dir = std::env::temp_dir().join(format!(
+            "pin-oci-pull-{}-{}",
+            std::process::id(),
+            spec.digest.replace(':', "-")
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).map_err(RegistryError::Spawn)?;
+        let archive = dir.join("image.tar");
+        let result = self.hash_archive(spec, &archive);
+        let _ = std::fs::remove_dir_all(&dir);
+        result
+    }
+}
+
+impl SkopeoCli {
+    fn hash_archive(&self, spec: &PullSpec, archive: &Path) -> Result<String, RegistryError> {
+        let args = copy_args(spec, archive);
+        self.skopeo(&args.iter().map(String::as_str).collect::<Vec<_>>())?;
+        let output = Command::new("nix")
+            .args(["hash", "file", "--type", "sha256", "--sri"])
+            .arg(archive)
+            .output()
+            .map_err(RegistryError::Spawn)?;
+        if !output.status.success() {
+            return Err(RegistryError::NixHash(
+                String::from_utf8_lossy(&output.stderr).into_owned(),
+            ));
+        }
+        let hash = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+        if is_valid_sri(&hash) {
+            Ok(hash)
+        } else {
+            Err(RegistryError::NixHash(format!(
+                "unexpected output '{hash}'"
+            )))
+        }
     }
 }
 
@@ -193,6 +263,7 @@ mod tests {
             registry: "docker.io".into(),
             repository: "library/caddy".into(),
             tag: "2-alpine".into(),
+            pull_image: false,
         }
     }
 
@@ -300,5 +371,29 @@ mod tests {
             resolve(&rt, &target()),
             Err(RegistryError::Parse(_))
         ));
+    }
+
+    #[test]
+    fn copy_args_replay_what_pull_image_runs() {
+        let spec = PullSpec {
+            name: "docker.io/library/caddy".into(),
+            tag: "2-alpine".into(),
+            digest: format!("sha256:{HEX}"),
+            os: "linux".into(),
+            architecture: "arm64".into(),
+        };
+        assert_eq!(
+            copy_args(&spec, Path::new("/t/image.tar")),
+            [
+                "--insecure-policy",
+                "--override-os",
+                "linux",
+                "--override-arch",
+                "arm64",
+                "copy",
+                &format!("docker://docker.io/library/caddy@sha256:{HEX}"),
+                "docker-archive:///t/image.tar:docker.io/library/caddy:2-alpine",
+            ]
+        );
     }
 }

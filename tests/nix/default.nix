@@ -134,6 +134,7 @@ let
         registry = "docker.io";
         repository = "library/caddy";
         tag = "2-alpine";
+        pullImage = false;
       };
     };
 
@@ -255,6 +256,7 @@ let
           registry = "docker.io";
           repository = "library/caddy";
           tag = "2-alpine";
+          pullImage = false;
         };
       };
     };
@@ -357,7 +359,8 @@ let
     // (import ./resources.nix helpers).tests
     // (import ./projects.nix helpers).tests
     // (import ./convert.nix helpers).tests
-    // (import ./options.nix helpers).tests;
+    // (import ./options.nix helpers).tests
+    // (import ./pull-image.nix helpers).tests;
   failures = lib.debug.runTests allTests;
 in
 pkgs.runCommand "pin-oci-module-tests" { } (

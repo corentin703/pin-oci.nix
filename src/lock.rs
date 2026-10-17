@@ -38,6 +38,8 @@ pub(crate) struct Outcome {
     /// Refreshed images that already pointed at the latest digests.
     current: usize,
     pruned: Vec<String>,
+    /// `(image, system, hash)` computed for images pulled into the store.
+    hashed: Vec<(String, String, String)>,
     written: bool,
 }
 
@@ -96,17 +98,23 @@ impl Outcome {
                 format!("\n  ~ {key}{lines}")
             })
             .collect();
+        let hashed: String = self
+            .hashed
+            .iter()
+            .map(|(key, system, hash)| format!("\n  # {key} {system} {hash}"))
+            .collect();
         let current = match self.current {
             0 => String::new(),
             n => format!("\n  = {n} image(s) already current"),
         };
         format!(
-            "pin-oci: wrote {} ({} image(s)){}{}{}{}{}",
+            "pin-oci: wrote {} ({} image(s)){}{}{}{}{}{}",
             self.file.display(),
             self.total,
             list("+", &self.resolved),
             updated,
             list("-", &self.pruned),
+            hashed,
             current,
             self.skipped_note
         )
@@ -125,6 +133,8 @@ pub(crate) enum LockError {
     },
     /// Every image that failed to resolve, in key order. Nothing was written.
     Resolution(Vec<(String, RegistryError)>),
+    /// Every `(image, system)` whose archive hash could not be computed. Nothing was written.
+    NixHash(Vec<(String, String, RegistryError)>),
 }
 
 impl fmt::Display for LockError {
@@ -155,6 +165,17 @@ impl fmt::Display for LockError {
                 )?;
                 for (key, e) in errors {
                     write!(f, "\n  - {key}: {e}")?;
+                }
+                Ok(())
+            }
+            Self::NixHash(errors) => {
+                write!(
+                    f,
+                    "cannot hash {} image(s) to pull, lockfile unchanged:",
+                    errors.len()
+                )?;
+                for (key, system, e) in errors {
+                    write!(f, "\n  - {key} ({system}): {e}")?;
                 }
                 Ok(())
             }
@@ -241,7 +262,42 @@ pub(crate) fn lock(
                 updated.push((key.clone(), moved));
             }
         }
+        let mut image = image;
+        if let Some(old) = lockfile.get(&key) {
+            image.inherit_nix_hashes(old);
+        }
         lockfile.insert(key, image);
+    }
+
+    // Images pulled into the store need the hash of their archive. A digest that did not move
+    // keeps its hash, so a plain `lock` only fetches what has none.
+    let mut hashed = Vec::new();
+    let mut hash_errors = Vec::new();
+    for (key, systems) in &declared.systems {
+        if !declared.targets[key].pull_image {
+            continue;
+        }
+        let Some(image) = lockfile.get_mut(key) else {
+            continue;
+        };
+        for system in systems {
+            if image.nix_hash(system).is_some() {
+                continue;
+            }
+            let Some(spec) = image.pull_spec(system) else {
+                continue;
+            };
+            match runtime.archive_hash(&spec) {
+                Ok(hash) => {
+                    image.set_nix_hash(system, hash.clone());
+                    hashed.push((key.clone(), system.clone(), hash));
+                }
+                Err(e) => hash_errors.push((key.clone(), system.clone(), e)),
+            }
+        }
+    }
+    if !hash_errors.is_empty() {
+        return Err(LockError::NixHash(hash_errors));
     }
     let pruned = lockfile.prune(|key| declared.targets.contains_key(key));
     let written = lockfile.write(&file).map_err(LockError::Lockfile)?;
@@ -255,6 +311,7 @@ pub(crate) fn lock(
         updated,
         current,
         pruned,
+        hashed,
         written,
     })
 }
@@ -774,5 +831,160 @@ mod tests {
         assert!(std::fs::read_to_string(&file)
             .unwrap()
             .contains("aarch64-linux"));
+    }
+
+    const SRI_A: &str = "sha256-AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=";
+    const SRI_B: &str = "sha256-AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI=";
+    const CADDY_AMD64: &str = "docker.io/library/caddy@sha256:173b26306d711395accaeba8b67afcaad2a085ccb1e6bf26010bfe8c095a5229";
+
+    /// `declared`, with `pullImage` set on the given keys.
+    fn declared_pull(system: &str, keys: &[&str], pull: &[&str]) -> String {
+        let mut json: serde_json::Value = serde_json::from_str(&declared(system, keys)).unwrap();
+        for key in pull {
+            json["targets"][key]["pullImage"] = true.into();
+        }
+        json.to_string()
+    }
+
+    #[test]
+    fn only_images_to_pull_are_hashed_and_the_hash_is_written() {
+        let dir = temp_dir("lock-pull");
+        let ev = StubEvaluator::ok(&declared_pull("x86_64-linux", &[CADDY, SOLO], &[CADDY]));
+        let rt = runtime().hashing(CADDY_AMD64, SRI_A);
+
+        let out = lock(&ev, &rt, &flake(&dir), None, &Refresh::Missing).unwrap();
+        assert_eq!(
+            *rt.hash_calls.borrow(),
+            vec![CADDY_AMD64],
+            "solo is not pulled"
+        );
+        assert_eq!(
+            out.hashed,
+            vec![(
+                CADDY.to_owned(),
+                "x86_64-linux".to_owned(),
+                SRI_A.to_owned()
+            )]
+        );
+        let after = locked(&dir);
+        assert_eq!(
+            after.get(CADDY).unwrap().nix_hash("x86_64-linux"),
+            Some(SRI_A)
+        );
+        assert_eq!(after.get(SOLO).unwrap().nix_hash("x86_64-linux"), None);
+        assert!(out
+            .message()
+            .contains(&format!("# {CADDY} x86_64-linux {SRI_A}")));
+    }
+
+    #[test]
+    fn a_hashed_lockfile_is_not_hashed_again() {
+        let dir = temp_dir("lock-pull-idempotent");
+        let ev = StubEvaluator::ok(&declared_pull("x86_64-linux", &[CADDY], &[CADDY]));
+        lock(
+            &ev,
+            &runtime().hashing(CADDY_AMD64, SRI_A),
+            &flake(&dir),
+            None,
+            &Refresh::Missing,
+        )
+        .unwrap();
+        let before = std::fs::read(dir.join(LOCKFILE_NAME)).unwrap();
+
+        let rt = runtime();
+        let out = lock(&ev, &rt, &flake(&dir), None, &Refresh::Missing).unwrap();
+        assert!(!out.written);
+        assert!(rt.hash_calls.borrow().is_empty() && rt.calls.borrow().is_empty());
+        assert_eq!(std::fs::read(dir.join(LOCKFILE_NAME)).unwrap(), before);
+    }
+
+    #[test]
+    fn enabling_pull_on_a_locked_image_hashes_it_without_resolving_again() {
+        let dir = locked_dir("lock-pull-later");
+        let ev = StubEvaluator::ok(&declared_pull("x86_64-linux", &[CADDY, SOLO], &[CADDY]));
+        let rt = StubRuntime::new().hashing(CADDY_AMD64, SRI_A);
+
+        let out = lock(&ev, &rt, &flake(&dir), None, &Refresh::Missing).unwrap();
+        assert!(out.written && out.resolved.is_empty());
+        assert!(rt.calls.borrow().is_empty(), "no registry resolution");
+        assert_eq!(
+            locked(&dir).get(CADDY).unwrap().nix_hash("x86_64-linux"),
+            Some(SRI_A)
+        );
+    }
+
+    #[test]
+    fn update_keeps_the_hash_of_a_digest_that_did_not_move_and_recomputes_the_others() {
+        let dir = temp_dir("lock-pull-update");
+        let ev = StubEvaluator::ok(&declared_pull("x86_64-linux", &[CADDY], &[CADDY]));
+        lock(
+            &ev,
+            &runtime().hashing(CADDY_AMD64, SRI_A),
+            &flake(&dir),
+            None,
+            &Refresh::Missing,
+        )
+        .unwrap();
+
+        // Nothing moved: the stored hash survives and nothing is fetched.
+        let rt = runtime();
+        let out = lock(&ev, &rt, &flake(&dir), None, &Refresh::All).unwrap();
+        assert!(!out.written && rt.hash_calls.borrow().is_empty());
+
+        // The tag moved: the old hash is wrong for the new digest.
+        let moved = format!("docker.io/library/caddy@{NEW_AMD64}");
+        let rt = moved_runtime().hashing(&moved, SRI_B);
+        let out = lock(&ev, &rt, &flake(&dir), None, &Refresh::All).unwrap();
+        assert!(out.written);
+        assert_eq!(*rt.hash_calls.borrow(), vec![moved]);
+        assert_eq!(
+            locked(&dir).get(CADDY).unwrap().nix_hash("x86_64-linux"),
+            Some(SRI_B),
+            "never the stale hash"
+        );
+    }
+
+    #[test]
+    fn a_hash_failure_leaves_the_lockfile_untouched_and_names_the_image() {
+        let dir = temp_dir("lock-pull-fail");
+        let path = dir.join(LOCKFILE_NAME);
+        let ev = StubEvaluator::ok(&declared_pull("x86_64-linux", &[CADDY], &[CADDY]));
+
+        let rt = runtime().hash_failing(CADDY_AMD64, "skopeo exploded");
+        let err = lock(&ev, &rt, &flake(&dir), None, &Refresh::Missing).unwrap_err();
+        assert!(!path.exists(), "nothing written, not even the digests");
+        let msg = err.to_string();
+        assert!(
+            msg.contains(CADDY) && msg.contains("x86_64-linux") && msg.contains("skopeo exploded")
+        );
+
+        let dir = locked_dir("lock-pull-fail-existing");
+        let before = std::fs::read(dir.join(LOCKFILE_NAME)).unwrap();
+        lock(&ev, &rt, &flake(&dir), None, &Refresh::Missing).unwrap_err();
+        assert_eq!(std::fs::read(dir.join(LOCKFILE_NAME)).unwrap(), before);
+    }
+
+    #[test]
+    fn every_platform_of_every_declaring_host_is_hashed() {
+        let dir = temp_dir("lock-pull-hosts");
+        let file = dir.join(LOCKFILE_NAME);
+        let ev = StubEvaluator::routed().route(".#nixosConfigurations", r#"["a","b"]"#);
+        let ev = host_route(ev, "a", &declared_pull("x86_64-linux", &[CADDY], &[CADDY]));
+        let ev = host_route(ev, "b", &declared_pull("aarch64-linux", &[CADDY], &[]));
+        let arm = format!("docker.io/library/caddy@{ARM64}");
+        let rt = runtime().hashing(CADDY_AMD64, SRI_A).hashing(&arm, SRI_B);
+
+        lock(&ev, &rt, ".", Some(&file), &Refresh::Missing).unwrap();
+        // Host `b` does not pull, but the image is pulled by `a`: the union decides per image,
+        // and each platform of a declaring host needs its own hash.
+        let after = Lockfile::read(&file).unwrap();
+        assert_eq!(
+            after.get(CADDY).unwrap().nix_hash("x86_64-linux"),
+            Some(SRI_A)
+        );
+        assert_eq!(
+            after.get(CADDY).unwrap().nix_hash("aarch64-linux"),
+            Some(SRI_B)
+        );
     }
 }
