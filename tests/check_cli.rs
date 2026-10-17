@@ -1,4 +1,4 @@
-//! End-to-end: `pin-oci lock --check` and `--list` (the real binary) against a fake `nix` on PATH. Offline.
+//! End-to-end: `pin-oci lock check` and `lock list` (the real binary) against a fake `nix` on PATH. Offline.
 
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
@@ -49,7 +49,7 @@ impl Fixture {
 
     fn run(&self, args: &[&str]) -> Output {
         Command::new(env!("CARGO_BIN_EXE_pin-oci"))
-            .args(["lock", "--check"])
+            .args(["lock", "check"])
             .args(args)
             .env("PATH", self.dir.join("bin"))
             .output()
@@ -208,7 +208,7 @@ fn list_shows_locked_missing_and_stale_images_and_exits_0() {
     let out = Command::new(env!("CARGO_BIN_EXE_pin-oci"))
         .args([
             "lock",
-            "--list",
+            "list",
             "--flake",
             &format!("{}#box", fx.flake().display()),
         ])
@@ -228,18 +228,18 @@ fn list_shows_locked_missing_and_stale_images_and_exits_0() {
 }
 
 #[test]
-fn list_cannot_be_combined_with_the_other_modes() {
-    let fx = Fixture::new("list-modes");
+fn the_old_mode_flags_are_usage_errors_and_run_nothing() {
+    let fx = Fixture::new("old-flags");
     fx.nix_printing(&declared(&[KEY]));
-    for other in ["--check", "--update"] {
+    for flag in ["--check", "--list", "--update"] {
         let out = Command::new(env!("CARGO_BIN_EXE_pin-oci"))
-            .args(["lock", "--list", other])
+            .args(["lock", flag])
             .env("PATH", fx.dir.join("bin"))
             .output()
             .unwrap();
-        assert_eq!(out.status.code(), Some(2), "{other}");
+        assert_eq!(out.status.code(), Some(2), "{flag}");
         assert!(
-            stderr(&out).contains("cannot be used with"),
+            stderr(&out).contains("unexpected argument"),
             "{}",
             stderr(&out)
         );

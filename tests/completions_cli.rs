@@ -27,8 +27,8 @@ fn prints_a_script_for_each_supported_shell_and_nothing_else() {
 fn the_script_follows_the_cli_modes() {
     let out = run(&["bash"]);
     let script = String::from_utf8_lossy(&out.stdout);
-    for flag in ["--check", "--update", "--list"] {
-        assert!(script.contains(flag), "{flag}");
+    for word in ["check", "update", "list"] {
+        assert!(script.contains(word), "{word}");
     }
 }
 

@@ -333,7 +333,7 @@ The CLI never parses image references and holds no registry client or credential
 
 #### Commands:
 
-* `pin-oci lock [--flake <ref>] [--file <path>] [--update [<image>...]]`, and its mode `--check` below:
+* `pin-oci lock [--flake <ref>] [--file <path>]`, and its subcommands `lock update [<image>...]`, `lock check` and `lock list` below. `--flake` and `--file` are accepted before or after the subcommand, as in `nix flake`:
 1. Evaluates the configuration without building, retrieving the host system and the targets in a single evaluation (per host; see the end of this section for `--flake` without `<host>`):
 ```bash
 nix eval --json <flake>#nixosConfigurations."<host>".config \
@@ -342,16 +342,16 @@ nix eval --json <flake>#nixosConfigurations."<host>".config \
 ```
 
 
-2. Resolves only the targets missing from the lockfile (absent key, or no entry for the host system); existing entries are never re-resolved, unless `--update` selects them (see below).
+2. Resolves only the targets missing from the lockfile (absent key, or no entry for the host system); existing entries are never re-resolved, unless `lock update` selects them (see below).
 3. For each, runs `skopeo inspect --raw docker://<registry>/<repository>:<tag>`:
    * **index** (`manifests[]`): takes each entry's `digest` and `platform.{os,architecture,variant}`, maps platforms through the table of §2 and ignores unmappable entries (`unknown/unknown` attestations, `s390x`, `arm` v6...);
    * **single manifest** (no `manifests`): runs `skopeo inspect --no-tags` and reads `Digest`, `Os`, `Architecture`, `Variant`; an unmappable platform is an error.
 4. Fails if an image has no manifest for the host system, or if two manifests map to the same system.
-5. For every target whose `lockTargets` entry has `pullImage = true` (any declaring container pulls it, whatever the host), computes the `nixHash` of each platform of the declaring hosts that has none, by running what `pullImage` runs (`skopeo --insecure-policy --override-os <os> --override-arch <arch> copy docker://<registry>/<repository>@<digest> docker-archive://<tmp>:<registry>/<repository>:<tag>`, then `nix hash file --type sha256 --sri`). A digest that did not move keeps its hash, so a plain `lock` fetches only what has none; `--update` recomputes the hash of every platform whose digest moved. Any failure fails the command and leaves the lockfile untouched.
+5. For every target whose `lockTargets` entry has `pullImage = true` (any declaring container pulls it, whatever the host), computes the `nixHash` of each platform of the declaring hosts that has none, by running what `pullImage` runs (`skopeo --insecure-policy --override-os <os> --override-arch <arch> copy docker://<registry>/<repository>@<digest> docker-archive://<tmp>:<registry>/<repository>:<tag>`, then `nix hash file --type sha256 --sri`). A digest that did not move keeps its hash, so a plain `lock` fetches only what has none; `lock update` recomputes the hash of every platform whose digest moved. Any failure fails the command and leaves the lockfile untouched.
 6. Prunes lockfile entries absent from `lockTargets`.
 7. Writes deterministic JSON (`BTreeMap` order, fixed field order, 2-space indent, final newline), atomically (temporary file then rename), and leaves the file untouched when the content is unchanged.
 
-**`--update [<image>...]`** is the only way a locked digest changes. It re-resolves locked images, moving each tag to its current digests, and replaces the whole entry (every platform of the index, not only the host's). With no argument it covers every declared image; otherwise only the given images, each named by its **canonical key**, exactly as it appears in the lockfile and in `lockTargets`. The CLI still does not normalize: a key that no declared image has (`caddy:2-alpine` instead of `docker.io/library/caddy:2-alpine`) is an error that lists the declared keys, raised before any registry call, with the lockfile untouched. Missing images are still resolved and undeclared entries still pruned (steps 2 and 6). The output lists, for each refreshed image whose digests moved, the platforms concerned (`~ <key>`, then `<system> <old> -> <new>`), and counts the images already current. `--update` excludes `--check`; the image arguments require `--update`.
+**`lock update [<image>...]`** is the only way a locked digest changes. It re-resolves locked images, moving each tag to its current digests, and replaces the whole entry (every platform of the index, not only the host's). With no argument it covers every declared image; otherwise only the given images, each named by its **canonical key**, exactly as it appears in the lockfile and in `lockTargets`. The CLI still does not normalize: a key that no declared image has (`caddy:2-alpine` instead of `docker.io/library/caddy:2-alpine`) is an error that lists the declared keys, raised before any registry call, with the lockfile untouched. Missing images are still resolved and undeclared entries still pruned (steps 2 and 6). The output lists, for each refreshed image whose digests moved, the platforms concerned (`~ <key>`, then `<system> <old> -> <new>`), and counts the images already current. The image arguments belong to `update` alone.
 
 **All or nothing:** if any image fails to resolve, every failure is reported, nothing is written and the exit code is 2.
 
@@ -360,12 +360,12 @@ nix eval --json <flake>#nixosConfigurations."<host>".config \
 **Registry access and authentication** are delegated to `skopeo` (runtime dependency, wrapped into the `pin-oci` package and provided by the dev shells), which reads the host's own credentials (`REGISTRY_AUTH_FILE`, `${XDG_RUNTIME_DIR}/containers/auth.json`, `~/.docker/config.json`) and credential helpers. The CLI embeds no HTTP client and no credential handling, and does not depend on `virtualisation.oci-containers.backend`.
 
 
-* `pin-oci lock --check [--flake <ref>] [--file <path>]` (there is no separate `check` subcommand):
+* `pin-oci lock check [--flake <ref>] [--file <path>]` (there is no top-level `check` subcommand):
 Checks that every key of `lockTargets` has an entry for the platform of every host declaring it in the lockfile (and a `nixHash` for it when the target has `pullImage = true`), without modifying any file. It evaluates the same `{ system; targets }` as `lock` (only the target keys are used), never the lockfile. Lockfile entries absent from `lockTargets` are ignored (only `lock` prunes them); a missing lockfile counts as empty.
 Exit codes: 0 = in sync, 1 = out of sync, 2 = error (nix failure, unreadable or invalid lockfile, remote flake without `--file`). Suited for CI steps.
 
-* `pin-oci lock --list [--flake <ref>] [--file <path>]`:
-Lists every key that is declared (`lockTargets`) or locked, sorted, as a table `STATUS IMAGE HOSTS DIGEST`. `HOSTS` is the comma-separated list of hosts declaring the image (`-` for a stale one). Status is relative to the platforms of those hosts: `locked` (declared, has a digest for each of them), `missing` (declared, no entry for at least one, even if other systems are locked) or `no-hash` (locked, but pulled into the store and lacking the `nixHash` of one of those platforms) or `stale` (locked, no longer declared). `DIGEST` shows, in full, one `<system> <digest>` per line for each of those platforms the lockfile has (every locked platform for a stale image). It evaluates the same `{ system; targets }` as `check`, reads the lockfile (absent = empty) and writes nothing; it takes no `Runtime`, so it cannot contact a registry. Exit codes: 0 on success whatever the statuses (use `--check` to gate CI), 2 on error. `--list` excludes `--check` and `--update`.
+* `pin-oci lock list [--flake <ref>] [--file <path>]`:
+Lists every key that is declared (`lockTargets`) or locked, sorted, as a table `STATUS IMAGE HOSTS DIGEST`. `HOSTS` is the comma-separated list of hosts declaring the image (`-` for a stale one). Status is relative to the platforms of those hosts: `locked` (declared, has a digest for each of them), `missing` (declared, no entry for at least one, even if other systems are locked) or `no-hash` (locked, but pulled into the store and lacking the `nixHash` of one of those platforms) or `stale` (locked, no longer declared). `DIGEST` shows, in full, one `<system> <digest>` per line for each of those platforms the lockfile has (every locked platform for a stale image). It evaluates the same `{ system; targets }` as `check`, reads the lockfile (absent = empty) and writes nothing; it takes no `Runtime`, so it cannot contact a registry. Exit codes: 0 on success whatever the statuses (use `lock check` to gate CI), 2 on error. 
 
 * `pin-oci completions <shell>`:
 Prints the completion script for `bash`, `zsh`, `fish`, `elvish` or `powershell` on stdout (`clap_complete`, generated from the `clap` definition so it cannot drift from the CLI). It touches no file and needs neither `nix` nor `skopeo`; an unknown or missing shell is a usage error (exit 2). The Nix package installs the bash, zsh and fish scripts (`installShellCompletion`, produced by the built binary itself), so they are in place as soon as `pin-oci` is in `environment.systemPackages`.
@@ -536,8 +536,8 @@ pin-oci.nix/
 ├── Cargo.toml
 ├── src/
 │   ├── main.rs         # CLI entry point, clap subcommands
-│   ├── check.rs        # `lock --check`: targets vs lockfile
-│   ├── list.rs         # `lock --list`: declared and locked images with their status
+│   ├── check.rs        # `lock check`: targets vs lockfile
+│   ├── list.rs         # `lock list`: declared and locked images with their status
 │   ├── convert.rs      # `convert`: compose subset to a project, warnings and errors (pure)
 │   ├── render.rs       # `convert`: project to Nix text, string escaping (pure)
 │   ├── nix.rs          # nix eval invocation, system + lockTargets parsing

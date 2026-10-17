@@ -17,9 +17,9 @@ pkgs.runCommand "pin-oci-completions-tests"
         || { echo "$file differs from 'pin-oci completions $shell'" >&2; exit 1; }
     }
 
-    check ${pin-oci}/share/bash-completion/completions/pin-oci.bash bash --update --list --check
-    check ${pin-oci}/share/zsh/site-functions/_pin-oci zsh --update --list --check
-    check ${pin-oci}/share/fish/vendor_completions.d/pin-oci.fish fish "-l update" "-l list" "-l check"
+    check ${pin-oci}/share/bash-completion/completions/pin-oci.bash bash update list check
+    check ${pin-oci}/share/zsh/site-functions/_pin-oci zsh update list check
+    check ${pin-oci}/share/fish/vendor_completions.d/pin-oci.fish fish update list check
 
     echo "completion scripts installed and up to date"
     touch $out

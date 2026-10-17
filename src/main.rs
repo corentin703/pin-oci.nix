@@ -28,23 +28,13 @@ enum Command {
     /// Resolve declared images to per-platform digests and write pin-oci.lock
     Lock {
         /// Flake reference: <flake>#<host>, or <flake> for every host that enables pin-oci
-        #[arg(long, default_value = ".")]
+        #[arg(long, default_value = ".", global = true)]
         flake: String,
         /// Lockfile to read or write (default: <flake root>/pin-oci.lock)
-        #[arg(long)]
+        #[arg(long, global = true)]
         file: Option<PathBuf>,
-        /// Only check that every declared image is in the lockfile; change nothing
-        #[arg(long)]
-        check: bool,
-        /// List declared and locked images with their status for the host platform
-        #[arg(long, conflicts_with_all = ["check", "update"])]
-        list: bool,
-        /// Re-resolve locked images to the latest digest of their tag (default: all)
-        #[arg(long, conflicts_with = "check")]
-        update: bool,
-        /// With --update: canonical keys of the images to refresh, as in pin-oci.lock
-        #[arg(requires = "update", conflicts_with_all = ["check", "list"], value_name = "IMAGE")]
-        images: Vec<String>,
+        #[command(subcommand)]
+        action: Option<LockAction>,
     },
     /// Convert a docker-compose file (a useful subset) into a pin-oci project module
     Convert {
@@ -67,16 +57,41 @@ enum Command {
     },
 }
 
-/// Exit codes: 0 = success (`--check`: in sync), 1 = `--check` out of sync or `convert --strict`
+#[derive(Debug, Subcommand)]
+enum LockAction {
+    /// Re-resolve locked images to the latest digest of their tag (default: all)
+    Update {
+        /// Canonical keys of the images to refresh, as in pin-oci.lock
+        #[arg(value_name = "IMAGE")]
+        images: Vec<String>,
+    },
+    /// List declared and locked images with their status for the host platform
+    List,
+    /// Only check that every declared image is in the lockfile; change nothing
+    Check,
+}
+
+/// Exit codes: 0 = success (`lock check`: in sync), 1 = `lock check` out of sync or `convert --strict`
 /// with warnings, 2 = error.
 fn main() -> ExitCode {
     match Cli::parse().command {
         Command::Lock {
-            flake, file, check, ..
-        } if check => run_check(&flake, file.as_deref()),
-        Command::Lock {
-            flake, file, list, ..
-        } if list => run_list(&flake, file.as_deref()),
+            flake,
+            file,
+            action,
+        } => match action {
+            None => run_lock(&flake, file.as_deref(), &lock::Refresh::Missing),
+            Some(LockAction::Update { images }) => {
+                let refresh = if images.is_empty() {
+                    lock::Refresh::All
+                } else {
+                    lock::Refresh::Only(images)
+                };
+                run_lock(&flake, file.as_deref(), &refresh)
+            }
+            Some(LockAction::List) => run_list(&flake, file.as_deref()),
+            Some(LockAction::Check) => run_check(&flake, file.as_deref()),
+        },
         Command::Convert {
             file,
             name,
@@ -86,20 +101,6 @@ fn main() -> ExitCode {
         Command::Completions { shell } => {
             completions(shell, &mut std::io::stdout());
             ExitCode::SUCCESS
-        }
-        Command::Lock {
-            flake,
-            file,
-            update,
-            images,
-            ..
-        } => {
-            let refresh = match (update, images.is_empty()) {
-                (false, _) => lock::Refresh::Missing,
-                (true, true) => lock::Refresh::All,
-                (true, false) => lock::Refresh::Only(images),
-            };
-            run_lock(&flake, file.as_deref(), &refresh)
         }
     }
 }
@@ -210,93 +211,94 @@ mod tests {
         Cli::try_parse_from(std::iter::once("pin-oci").chain(args.iter().copied()))
     }
 
-    /// The arguments of a successfully parsed `lock` invocation.
-    #[derive(Debug)]
-    struct LockArgs {
-        flake: String,
-        file: Option<PathBuf>,
-        check: bool,
-        list: bool,
-        update: bool,
-        images: Vec<String>,
-    }
-
-    fn lock_args(args: &[&str]) -> LockArgs {
+    /// `(flake, file, action)` of a successfully parsed `lock` invocation.
+    fn lock_args(args: &[&str]) -> (String, Option<PathBuf>, Option<LockAction>) {
         match parse(args).unwrap().command {
             Command::Lock {
                 flake,
                 file,
-                check,
-                list,
-                update,
-                images,
-            } => LockArgs {
-                flake,
-                file,
-                check,
-                list,
-                update,
-                images,
-            },
+                action,
+            } => (flake, file, action),
             other => panic!("unexpected command: {other:?}"),
         }
     }
 
     #[test]
     fn lock_defaults() {
-        let a = lock_args(&["lock"]);
-        assert_eq!(a.flake, ".");
-        assert_eq!(a.file, None);
-        assert!(!a.check && !a.list && !a.update && a.images.is_empty());
+        let (flake, file, action) = lock_args(&["lock"]);
+        assert_eq!(flake, ".");
+        assert_eq!(file, None);
+        assert!(action.is_none());
     }
 
     #[test]
     fn lock_with_flake_and_file() {
-        let a = lock_args(&["lock", "--flake", "/etc/nixos#host", "--file", "x.lock"]);
-        assert_eq!(a.flake, "/etc/nixos#host");
-        assert_eq!(a.file, Some(PathBuf::from("x.lock")));
-        assert!(!a.check);
+        let (flake, file, action) =
+            lock_args(&["lock", "--flake", "/etc/nixos#host", "--file", "x.lock"]);
+        assert_eq!(flake, "/etc/nixos#host");
+        assert_eq!(file, Some(PathBuf::from("x.lock")));
+        assert!(action.is_none());
     }
 
     #[test]
-    fn lock_check_with_flake_and_file() {
-        let a = lock_args(&["lock", "--check", "--flake", ".#box", "--file", "x.lock"]);
-        assert_eq!(a.flake, ".#box");
-        assert_eq!(a.file, Some(PathBuf::from("x.lock")));
-        assert!(a.check);
+    fn flake_and_file_are_accepted_before_and_after_the_subcommand() {
+        for sub in ["update", "list", "check"] {
+            let before = lock_args(&["lock", "--flake", ".#box", "--file", "x.lock", sub]);
+            let after = lock_args(&["lock", sub, "--flake", ".#box", "--file", "x.lock"]);
+            for (flake, file, action) in [before, after] {
+                assert_eq!(flake, ".#box", "{sub}");
+                assert_eq!(file, Some(PathBuf::from("x.lock")), "{sub}");
+                assert!(action.is_some(), "{sub}");
+            }
+        }
     }
 
     #[test]
     fn update_takes_optional_canonical_keys() {
-        let a = lock_args(&["lock", "--update"]);
-        assert!(a.update && a.images.is_empty());
+        let (_, _, action) = lock_args(&["lock", "update"]);
+        assert!(matches!(action, Some(LockAction::Update { images }) if images.is_empty()));
 
-        let a = lock_args(&["lock", "--update", "docker.io/library/caddy:2-alpine", "b"]);
-        assert!(a.update);
-        assert_eq!(a.images, ["docker.io/library/caddy:2-alpine", "b"]);
+        let (_, _, action) =
+            lock_args(&["lock", "update", "docker.io/library/caddy:2-alpine", "b"]);
+        match action {
+            Some(LockAction::Update { images }) => {
+                assert_eq!(images, ["docker.io/library/caddy:2-alpine", "b"]);
+            }
+            other => panic!("unexpected action: {other:?}"),
+        }
     }
 
     #[test]
-    fn list_is_a_mode_of_its_own() {
-        let a = lock_args(&["lock", "--list", "--flake", ".#box", "--file", "x.lock"]);
-        assert!(a.list && !a.check && !a.update);
-        assert_eq!(a.flake, ".#box");
-        assert_eq!(a.file, Some(PathBuf::from("x.lock")));
+    fn list_and_check_are_subcommands_that_take_no_image() {
+        let (_, _, action) = lock_args(&["lock", "list"]);
+        assert!(matches!(action, Some(LockAction::List)));
+        let (_, _, action) = lock_args(&["lock", "check"]);
+        assert!(matches!(action, Some(LockAction::Check)));
 
-        assert!(parse(&["lock", "--list", "--check"]).is_err());
-        assert!(parse(&["lock", "--list", "--update"]).is_err());
-        assert!(parse(&["lock", "--list", "docker.io/library/caddy:2-alpine"]).is_err());
+        assert!(parse(&["lock", "list", "docker.io/library/caddy:2-alpine"]).is_err());
+        assert!(parse(&["lock", "check", "docker.io/library/caddy:2-alpine"]).is_err());
     }
 
     #[test]
-    fn images_need_update_and_update_excludes_check() {
+    fn the_modes_are_no_longer_flags() {
+        for flag in ["--update", "--list", "--check"] {
+            assert!(parse(&["lock", flag]).is_err(), "{flag}");
+        }
+        assert!(parse(&["lock", "--update", "docker.io/library/caddy:2-alpine"]).is_err());
+    }
+
+    #[test]
+    fn images_need_the_update_subcommand() {
         assert!(parse(&["lock", "docker.io/library/caddy:2-alpine"]).is_err());
-        assert!(parse(&["lock", "--check", "docker.io/library/caddy:2-alpine"]).is_err());
-        assert!(parse(&["lock", "--check", "--update"]).is_err());
     }
 
     #[test]
-    fn check_is_no_longer_a_subcommand() {
+    fn modes_cannot_be_chained() {
+        assert!(parse(&["lock", "list", "check"]).is_err());
+    }
+
+    #[test]
+    fn check_is_no_longer_a_top_level_subcommand() {
         assert!(parse(&["check"]).is_err());
         assert!(parse(&["check", "--flake", ".#box"]).is_err());
     }
@@ -314,7 +316,13 @@ mod tests {
             for word in ["pin-oci", "lock", "completions"] {
                 assert!(script.contains(word), "{shell}: missing '{word}'");
             }
-            for flag in ["check", "update", "list", "flake", "file"] {
+            for word in ["check", "update", "list"] {
+                assert!(
+                    script.contains(word),
+                    "{shell}: missing subcommand '{word}'"
+                );
+            }
+            for flag in ["flake", "file"] {
                 // fish declares long flags as `-l <name>`, bash and zsh spell them out.
                 let spelled = if shell == Shell::Fish {
                     format!("-l {flag}")

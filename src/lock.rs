@@ -126,7 +126,7 @@ pub(crate) enum LockError {
     Nix(NixError),
     Lockfile(LockfileError),
     NoLockfilePath(String),
-    /// Keys given to `--update` that no declared image has. Nothing was resolved.
+    /// Keys given to `lock update` that no declared image has. Nothing was resolved.
     UnknownImages {
         unknown: Vec<String>,
         declared: Vec<String>,

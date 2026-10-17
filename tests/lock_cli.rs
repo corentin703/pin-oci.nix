@@ -137,7 +137,7 @@ esac"#,
     fn check(&self) -> Output {
         let flake = format!("{}#box", self.dir.join("flake").display());
         Command::new(env!("CARGO_BIN_EXE_pin-oci"))
-            .args(["lock", "--check", "--flake", &flake])
+            .args(["lock", "check", "--flake", &flake])
             .env("PATH", self.dir.join("bin"))
             .output()
             .unwrap()
@@ -289,7 +289,7 @@ fn update_follows_a_moved_tag_while_plain_lock_does_not() {
         .count();
     assert_eq!(amd64_before, 2);
 
-    let out = fx.lock_with(&["--update"]);
+    let out = fx.lock_with(&["update"]);
     assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
     assert!(
         stdout(&out).contains("~ docker.io/library/caddy:2-alpine"),
@@ -320,7 +320,7 @@ fn update_with_a_key_only_looks_up_that_image() {
     let caddy_lookups = fx.skopeo_log().matches("library/caddy").count();
 
     fx.move_caddy_tag();
-    let out = fx.lock_with(&["--update", "docker.io/acme/solo:1"]);
+    let out = fx.lock_with(&["update", "docker.io/acme/solo:1"]);
     assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
     assert_eq!(
         fx.skopeo_log().matches("library/caddy").count(),
@@ -339,7 +339,7 @@ fn update_with_an_unknown_key_exits_2_without_calling_skopeo() {
     assert_eq!(fx.run("lock").status.code(), Some(0));
     let (before, calls) = (fs::read(fx.lockfile()).unwrap(), fx.skopeo_calls());
 
-    let out = fx.lock_with(&["--update", "caddy:2-alpine"]);
+    let out = fx.lock_with(&["update", "caddy:2-alpine"]);
     assert_eq!(out.status.code(), Some(2));
     let err = stderr(&out);
     assert!(
@@ -364,7 +364,7 @@ fn a_failing_update_leaves_the_lockfile_byte_identical() {
 
     // The registry now refuses caddy.
     fx.skopeo_serving("/nonexistent/index.json");
-    let out = fx.lock_with(&["--update"]);
+    let out = fx.lock_with(&["update"]);
     assert_eq!(out.status.code(), Some(2));
     assert_eq!(fs::read(fx.lockfile()).unwrap(), before);
 }
@@ -410,7 +410,7 @@ fn without_flake_every_host_of_the_flake_goes_into_one_lockfile() {
     fx.nix_hosts(false);
     fx.skopeo();
 
-    assert_eq!(fx.bare(&["--check"]).status.code(), Some(1));
+    assert_eq!(fx.bare(&["check"]).status.code(), Some(1));
 
     let out = fx.bare(&[]);
     assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
@@ -422,8 +422,8 @@ fn without_flake_every_host_of_the_flake_goes_into_one_lockfile() {
         "no host in the lockfile"
     );
 
-    assert_eq!(fx.bare(&["--check"]).status.code(), Some(0));
-    let list = stdout(&fx.bare(&["--list"]));
+    assert_eq!(fx.bare(&["check"]).status.code(), Some(0));
+    let list = stdout(&fx.bare(&["list"]));
     assert!(list.contains("HOSTS") && list.contains("arm,pc"), "{list}");
     assert!(list.contains("aarch64-linux sha256:") && list.contains("x86_64-linux sha256:"));
 }

@@ -11,7 +11,7 @@ network, and an image without a valid digest for the host platform fails evaluat
 with the command to run.
 
 > **Status.** All three milestones of [`BIBLE.md`](BIBLE.md) are implemented: the pinning
-> engine (`pin-oci lock` / `pin-oci lock --check`), shared networks and volumes, and compose-style
+> engine (`pin-oci lock` / `pin-oci lock check`), shared networks and volumes, and compose-style
 > projects.
 
 - [User manual](#user-manual)
@@ -172,10 +172,10 @@ virtualisation.pin-oci = {
 };
 ```
 
-`pin-oci lock` and `pin-oci lock --update` then also record a `nixHash` for each platform of such
+`pin-oci lock` and `pin-oci lock update` then also record a `nixHash` for each platform of such
 images. Unlike the digest, it cannot be read from the registry: the CLI **downloads the image**
 once (and again only when its digest moves). A missing hash fails evaluation with the command to
-run, and `lock --check` / `lock --list` report it (`no-hash`). `pullImage` needs an image without a
+run, and `lock check` / `lock list` report it (`no-hash`). `pullImage` needs an image without a
 digest in its reference.
 
 ### 3. Lock
@@ -201,14 +201,14 @@ written (exit 2); it is also an error when no host enables pin-oci.
 Behaviour worth knowing:
 
 - **A plain `lock` only resolves missing images.** An entry already in the lockfile for your
-  platform is never re-resolved (unless you pass `--update`), so a moving tag (`latest`, `v3`) does not change under you.
+  platform is never re-resolved (unless you run `lock update`), so a moving tag (`latest`, `v3`) does not change under you.
   Running `pin-oci lock` on an up-to-date lockfile does nothing and does not touch the file.
-- **To refresh images**, use `--update`: it moves each tag to its current digests and
+- **To refresh images**, use `lock update`: it moves each tag to its current digests and
   rewrites the entry for every platform.
 
   ```console
-  $ pin-oci lock --update --flake .#myhost                                   # every image
-  $ pin-oci lock --update --flake .#myhost docker.io/library/caddy:2-alpine  # one image
+  $ pin-oci lock update --flake .#myhost                                   # every image
+  $ pin-oci lock update --flake .#myhost docker.io/library/caddy:2-alpine  # one image
   pin-oci: wrote ./pin-oci.lock (2 image(s))
     ~ docker.io/library/caddy:2-alpine
         x86_64-linux sha256:173b26306d71… -> sha256:eeeeeeeeeeee…
@@ -217,8 +217,7 @@ Behaviour worth knowing:
 
   Name an image by its **canonical key** (the key in `pin-oci.lock`, see
   [Image references](#image-references)): `caddy:2-alpine` is refused, and the error lists
-  the declared keys. Nothing is written if any image fails. `--update` cannot be combined
-  with `--check`.
+  the declared keys. Nothing is written if any image fails.
 - **Stale entries are removed:** images no longer declared disappear from the lockfile.
 - **All or nothing.** If any image fails to resolve, every failure is listed, the lockfile
   is left untouched and the exit code is 2.
@@ -247,11 +246,11 @@ unsupported is an error.
 ### 4. Check (CI)
 
 ```console
-$ pin-oci lock --check --flake .#myhost
+$ pin-oci lock check --flake .#myhost
 pin-oci: 1 image(s) pinned for 'x86_64-linux' in ./pin-oci.lock
 ```
 
-`lock --check` never modifies anything and never contacts a registry. It verifies that every
+`lock check` never modifies anything and never contacts a registry. It verifies that every
 declared image has an entry for the host platform.
 
 | Exit code | Meaning |
@@ -260,13 +259,13 @@ declared image has an entry for the host platform.
 | 1 | out of sync: missing images are listed with the command to run |
 | 2 | error: `nix` failed, unreadable or invalid lockfile, remote flake without `--file` |
 
-Entries in the lockfile that are no longer declared do not make `--check` fail; only
+Entries in the lockfile that are no longer declared do not make `lock check` fail; only
 a plain `lock` prunes them.
 
 ### 5. List
 
 ```console
-$ pin-oci lock --list
+$ pin-oci lock list
 pin-oci: images for 'aarch64-linux, x86_64-linux' in ./pin-oci.lock
   STATUS   IMAGE                             HOSTS    DIGEST
   missing  docker.io/acme/solo:1             pc
@@ -284,9 +283,8 @@ Every image that is declared or locked, sorted, with the hosts declaring it and 
 | `missing` | declared, but nothing is locked for at least one of them: run `pin-oci lock` |
 | `stale` | in the lockfile but no longer declared: the next plain `lock` removes it |
 
-`--list` only reads: it never writes the lockfile and never contacts a registry. It exits 0
-whatever the statuses; use `--check` to fail a CI job. It cannot be combined with `--check`
-or `--update`.
+`lock list` only reads: it never writes the lockfile and never contacts a registry. It exits 0
+whatever the statuses; use `lock check` to fail a CI job.
 
 ### 6. Rebuild
 
@@ -303,7 +301,7 @@ then make it visible to the flake:
   git add pin-oci.lock
 ```
 
-`pin-oci lock` and `lock --check` evaluate only the list of images and the host platform, never
+`pin-oci lock` and `lock check` evaluate only the list of images and the host platform, never
 the lockfile, so they work on a configuration that does not build yet.
 
 ### 7. Networks and volumes
@@ -570,7 +568,7 @@ $ cargo clippy --all-targets -- -D warnings
 $ cargo test                 # Rust unit + end-to-end tests
 $ nix flake check            # builds the package (runs cargo test) + Nix module tests
 $ nix build                  # the pin-oci binary, wrapped with skopeo
-$ nix run . -- lock --check --flake path/to/flake#host
+$ nix run . -- lock check --flake path/to/flake#host
 ```
 
 `devenv.yaml` and `flake.nix` pin nixpkgs independently; update them with `devenv update`
@@ -623,8 +621,8 @@ break the code and check that a test fails.
 pin-oci.nix/
 ├── src/
 │   ├── main.rs         # CLI entry point, clap subcommands
-│   ├── check.rs        # `lock --check`: declared images vs lockfile
-│   ├── list.rs         # `lock --list`: declared and locked images with their status
+│   ├── check.rs        # `lock check`: declared images vs lockfile
+│   ├── list.rs         # `lock list`: declared and locked images with their status
 │   ├── convert.rs      # `convert`: compose subset to a project, warnings and errors
 │   ├── render.rs       # `convert`: project to Nix text, string escaping
 │   ├── lock.rs         # `lock`: resolve missing, prune, write
