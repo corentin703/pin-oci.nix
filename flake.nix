@@ -21,6 +21,12 @@
     {
       nixosModules.default = import ./modules/default.nix;
 
+      # Opt-in: `nixpkgs.overlays = [ pin-oci.overlays.default ];` gives `pkgs.pin-oci`.
+      # Reuses `packages.<system>.pin-oci` as is, so the binary cache still applies.
+      overlays.default = final: _prev: {
+        pin-oci = self.packages.${final.stdenv.hostPlatform.system}.pin-oci;
+      };
+
       packages = forAllSystems (pkgs: rec {
         pin-oci = pkgs.rustPlatform.buildRustPackage {
           pname = "pin-oci";
@@ -120,6 +126,11 @@
           binary-cache = import ./tests/nix/binary-cache.nix {
             inherit pkgs;
             flake = import ./flake.nix;
+          };
+          overlay = import ./tests/nix/overlay.nix {
+            inherit pkgs nixpkgs;
+            overlay = self.overlays.default;
+            package = pin-oci;
           };
           infra-scripts = import ./tests/nix/infra-scripts.nix {
             inherit pkgs nixpkgs;

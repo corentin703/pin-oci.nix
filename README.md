@@ -51,6 +51,21 @@ Add the flake as an input. `follows` keeps the module aligned with your nixpkgs:
 The CLI is `pin-oci.packages.<system>.default`. Run it with `nix run github:cprag/pin-oci.nix -- <args>`
 or add it to `environment.systemPackages` / your dev shell.
 
+To write `pkgs.pin-oci` instead, opt in to the overlay. Nothing is added to your `pkgs`
+unless you do:
+
+```nix
+{ pkgs, pin-oci, ... }:
+{
+  nixpkgs.overlays = [ pin-oci.overlays.default ];
+  environment.systemPackages = [ pkgs.pin-oci ];
+}
+```
+
+`pin-oci` must reach the module, for instance with `specialArgs = { inherit pin-oci; };` in
+`nixosSystem`. The overlay only adds the `pin-oci` attribute, and it is the very derivation of
+`packages.<system>.default`, so the binary cache below still applies.
+
 It needs `nix` and `skopeo` at run time. The packaged binary already carries `skopeo` in
 its `PATH`.
 
@@ -434,6 +449,7 @@ registry).
 | Rust unit | `src/*.rs` (`#[cfg(test)]`) | lockfile model, platform mapping, manifest resolution, `check` / `lock` logic, with `nix` and `skopeo` behind traits and stubbed. |
 | Rust end-to-end | `tests/check_cli.rs`, `tests/lock_cli.rs` | The real binary against a fake `nix` and a fake `skopeo` placed in `PATH`. `tests/fixtures/` holds real `skopeo` outputs captured once. |
 | Nix modules | `tests/nix/default.nix`, `infra.nix`, `projects.nix`, `resources.nix` (run by `nix flake check`) | Reference normalization, module evaluation against fixture lockfiles (present / missing / wrong architecture / corrupt), the generated systemd units, laziness of `lockTargets`, container ordering, and the exact expression the CLI evaluates (`src/apply.nix`, shared with Rust). |
+| Overlay | `tests/nix/overlay.nix` | `overlays.default` provides `pkgs.pin-oci` (same derivation as the package), adds nothing else, and `environment.systemPackages = [ pkgs.pin-oci ]` resolves; without the overlay `pkgs` has no `pin-oci`. |
 | Binary cache | `tests/nix/binary-cache.nix` | The flake's `nixConfig`: substituter, public key, key matching its substituter, `extra-*` only (defaults never replaced). |
 | Generated scripts | `tests/nix/infra-scripts.nix` | The network and volume unit scripts executed against a stateful fake backend: idempotence, flags, recreation, failure propagation. |
 | NixOS VM | `tests/nix/vm-infra.nix`, `vm-projects.nix` | Real `podman` and `docker` in a VM: resources created at boot, flags applied, units idempotent, container units ordered after their resources; for projects, prefixed and external resources, `dependsOn` ordering, and services resolving each other by bare name on the default network. Needs KVM (`system-features = kvm nixos-test`). |
@@ -482,7 +498,7 @@ pin-oci.nix/
 │   ├── container-module.nix  # oci-containers options shared by containers and services
 │   └── refs.nix        # pure image reference normalization
 ├── tests/              # Rust e2e + fixtures; nix/ holds the module, script and VM tests
-├── flake.nix           # nixosModules.default, packages.pin-oci, devShell, checks
+├── flake.nix           # nixosModules.default, overlays.default, packages.pin-oci, devShell, checks
 ├── devenv.nix          # development environment
 └── BIBLE.md            # specification
 ```

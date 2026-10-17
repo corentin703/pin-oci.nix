@@ -117,6 +117,13 @@ inputs = {
 };
 ```
 
+The CLI is also exposed as an overlay, **opt-in**: `overlays.default` adds a single attribute, `pin-oci`, which is `packages.<system>.pin-oci` unchanged (same derivation, so the binary cache applies). Neither the module nor the flake applies it implicitly; the host does:
+
+```nix
+nixpkgs.overlays = [ inputs.pin-oci.overlays.default ];
+environment.systemPackages = [ pkgs.pin-oci ];
+```
+
 `lockFile` has **no default** (a module cannot know the root of the user's flake) and is mandatory when `enable = true`. Use `./pin-oci.lock` when the configuration file sits at the flake root, otherwise `self + "/pin-oci.lock"` (`self` must be passed through `specialArgs`). In a flake, `builtins.pathExists` does not see files untracked by git: after `pin-oci lock`, run `git add pin-oci.lock`.
 
 ```nix
@@ -506,7 +513,7 @@ pin-oci.nix/
 │   ├── containers.nix  # Milestone 1: pin-oci engine + assertion
 │   ├── infra.nix       # Milestone 2: systemd networks and volumes
 │   └── projects.nix    # Milestone 3: Compose lowering to infra + containers
-├── flake.nix           # inputs.nixpkgs, nixosModules.default, packages.pin-oci
+├── flake.nix           # inputs.nixpkgs, nixosModules.default, overlays.default, packages.pin-oci
 └── README.md
 
 ```
