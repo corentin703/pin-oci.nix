@@ -1,6 +1,13 @@
 { pkgs, ... }:
 
 {
+  cachix = {
+    pull = [
+      "pin-oci"
+    ];
+    push = "pin-oci";
+  };
+
   # Default "nixpkgs" channel: cargo, rustc, clippy, rustfmt, rust-analyzer.
   languages.rust.enable = true;
 
