@@ -1,4 +1,5 @@
 mod check;
+mod list;
 mod lock;
 mod lockfile;
 mod nix;
@@ -31,21 +32,27 @@ enum Command {
         /// Only check that every declared image is in the lockfile; change nothing
         #[arg(long)]
         check: bool,
+        /// List declared and locked images with their status for the host platform
+        #[arg(long, conflicts_with_all = ["check", "update"])]
+        list: bool,
         /// Re-resolve locked images to the latest digest of their tag (default: all)
         #[arg(long, conflicts_with = "check")]
         update: bool,
         /// With --update: canonical keys of the images to refresh, as in pin-oci.lock
-        #[arg(requires = "update", conflicts_with = "check", value_name = "IMAGE")]
+        #[arg(requires = "update", conflicts_with_all = ["check", "list"], value_name = "IMAGE")]
         images: Vec<String>,
     },
 }
 
-/// Exit codes: 0 = in sync, 1 = out of sync, 2 = error.
+/// Exit codes: 0 = success (`--check`: in sync), 1 = `--check` out of sync, 2 = error.
 fn main() -> ExitCode {
     match Cli::parse().command {
         Command::Lock {
             flake, file, check, ..
         } if check => run_check(&flake, file.as_deref()),
+        Command::Lock {
+            flake, file, list, ..
+        } if list => run_list(&flake, file.as_deref()),
         Command::Lock {
             flake,
             file,
@@ -67,6 +74,19 @@ fn run_lock(flake: &str, file: Option<&Path>, refresh: &lock::Refresh) -> ExitCo
     match lock::lock(&nix::NixCli, &registry::SkopeoCli, flake, file, refresh) {
         Ok(outcome) => {
             println!("{}", outcome.message());
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("pin-oci: error: {e}");
+            ExitCode::from(2)
+        }
+    }
+}
+
+fn run_list(flake: &str, file: Option<&Path>) -> ExitCode {
+    match list::list(&nix::NixCli, flake, file) {
+        Ok(listing) => {
+            println!("{}", listing.message());
             ExitCode::SUCCESS
         }
         Err(e) => {
@@ -160,6 +180,30 @@ mod tests {
                 assert_eq!(images, ["docker.io/library/caddy:2-alpine", "b"]);
             }
         }
+    }
+
+    #[test]
+    fn list_is_a_mode_of_its_own() {
+        match parse(&["lock", "--list", "--flake", ".#box", "--file", "x.lock"])
+            .unwrap()
+            .command
+        {
+            Command::Lock {
+                flake,
+                file,
+                list,
+                check,
+                update,
+                ..
+            } => {
+                assert!(list && !check && !update);
+                assert_eq!(flake, ".#box");
+                assert_eq!(file, Some(PathBuf::from("x.lock")));
+            }
+        }
+        assert!(parse(&["lock", "--list", "--check"]).is_err());
+        assert!(parse(&["lock", "--list", "--update"]).is_err());
+        assert!(parse(&["lock", "--list", "docker.io/library/caddy:2-alpine"]).is_err());
     }
 
     #[test]

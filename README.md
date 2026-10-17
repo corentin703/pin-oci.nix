@@ -226,7 +226,29 @@ declared image has an entry for the host platform.
 Entries in the lockfile that are no longer declared do not make `--check` fail; only
 a plain `lock` prunes them.
 
-### 5. Rebuild
+### 5. List
+
+```console
+$ pin-oci lock --list --flake .#myhost
+pin-oci: images for 'x86_64-linux' in ./pin-oci.lock
+  missing  docker.io/acme/solo:1
+  locked   docker.io/library/caddy:2-alpine  sha256:173b26306d711395accaeba8b67afcaad2a085ccb1e6bf26010bfe8c095a5229
+  stale    docker.io/old/thing:3             sha256:0000000000000000000000000000000000000000000000000000000000000000
+```
+
+Every image that is declared or locked, sorted, with its status for the **host platform**:
+
+| Status | Meaning |
+| --- | --- |
+| `locked` | declared, and the lockfile has a digest for your platform (shown in full) |
+| `missing` | declared, but nothing is locked for your platform: run `pin-oci lock` |
+| `stale` | in the lockfile but no longer declared: the next plain `lock` removes it |
+
+`--list` only reads: it never writes the lockfile and never contacts a registry. It exits 0
+whatever the statuses; use `--check` to fail a CI job. It cannot be combined with `--check`
+or `--update`.
+
+### 6. Rebuild
 
 `nixos-rebuild` and `nix build` on the configuration stay offline. When something is
 not locked for your platform, evaluation stops with:
@@ -244,7 +266,7 @@ then make it visible to the flake:
 `pin-oci lock` and `lock --check` evaluate only the list of images and the host platform, never
 the lockfile, so they work on a configuration that does not build yet.
 
-### 6. Networks and volumes
+### 7. Networks and volumes
 
 Declare shared networks and volumes once; pin-oci creates them before the containers that
 use them.
@@ -294,7 +316,7 @@ are left to the backend. Network and volume names must match
 > **Limitation.** Resources are created by root. A rootless Podman container
 > (`podman.user` other than `root`) does not see them.
 
-### 7. Projects
+### 8. Projects
 
 A project groups interdependent services under one namespace, like a compose file. It is
 sugar: it compiles into the containers, networks and volumes of the previous sections, so
@@ -513,6 +535,7 @@ pin-oci.nix/
 ├── src/
 │   ├── main.rs         # CLI entry point, clap subcommands
 │   ├── check.rs        # `lock --check`: declared images vs lockfile
+│   ├── list.rs         # `lock --list`: declared and locked images with their status
 │   ├── lock.rs         # `lock`: resolve missing, prune, write
 │   ├── nix.rs          # nix eval boundary, <flake>#<host> handling
 │   ├── registry.rs     # skopeo boundary, index / single-manifest resolution

@@ -42,6 +42,11 @@ impl Image {
         self.arch.contains_key(system)
     }
 
+    pub(crate) fn digest(&self, system: &str) -> Option<&str> {
+        self.digests()
+            .find_map(|(s, digest)| (s == system).then_some(digest))
+    }
+
     /// `(system, digest)` of every recorded platform, in system order.
     pub(crate) fn digests(&self) -> impl Iterator<Item = (&str, &str)> {
         self.arch
@@ -174,6 +179,10 @@ impl Lockfile {
             })
             .map(str::to_owned)
             .collect()
+    }
+
+    pub(crate) fn keys(&self) -> impl Iterator<Item = &str> {
+        self.images.keys().map(String::as_str)
     }
 
     pub(crate) fn get(&self, key: &str) -> Option<&Image> {

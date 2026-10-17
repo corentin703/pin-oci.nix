@@ -356,6 +356,9 @@ nix eval --json <flake>#nixosConfigurations."<host>".config \
 Checks that every key of `lockTargets` has an entry for the host platform in the lockfile, without modifying any file. It evaluates the same `{ system; targets }` as `lock` (only the target keys are used), never the lockfile. Lockfile entries absent from `lockTargets` are ignored (only `lock` prunes them); a missing lockfile counts as empty.
 Exit codes: 0 = in sync, 1 = out of sync, 2 = error (nix failure, unreadable or invalid lockfile, remote flake without `--file`). Suited for CI steps.
 
+* `pin-oci lock --list [--flake <ref>] [--file <path>]`:
+Lists every key that is declared (`lockTargets`) or locked, sorted, with its status for the host system: `locked` (declared, has a digest for the host system, which is shown in full), `missing` (declared, no entry for the host system, even if other systems are locked) or `stale` (locked, no longer declared). It evaluates the same `{ system; targets }` as `check`, reads the lockfile (absent = empty) and writes nothing; it takes no `Runtime`, so it cannot contact a registry. Exit codes: 0 on success whatever the statuses (use `--check` to gate CI), 2 on error. `--list` excludes `--check` and `--update`.
+
 `--flake` takes `<flake>#<host>` and targets `nixosConfigurations."<host>".config`; a reference without `#<host>` is an error.
 
 ---
@@ -505,6 +508,7 @@ pin-oci.nix/
 ├── src/
 │   ├── main.rs         # CLI entry point, clap subcommands
 │   ├── check.rs        # `lock --check`: targets vs lockfile
+│   ├── list.rs         # `lock --list`: declared and locked images with their status
 │   ├── nix.rs          # nix eval invocation, system + lockTargets parsing
 │   ├── lock.rs         # `lock` command: resolve missing, prune, write
 │   ├── registry.rs     # Runtime trait around skopeo, index / single-manifest resolution

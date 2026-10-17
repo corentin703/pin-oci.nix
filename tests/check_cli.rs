@@ -1,4 +1,4 @@
-//! End-to-end: `pin-oci lock --check` (the real binary) against a fake `nix` on PATH. Offline.
+//! End-to-end: `pin-oci lock --check` and `--list` (the real binary) against a fake `nix` on PATH. Offline.
 
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
@@ -194,4 +194,54 @@ fn the_old_check_subcommand_is_rejected() {
         "{}",
         stderr(&out)
     );
+}
+
+#[test]
+fn list_shows_locked_missing_and_stale_images_and_exits_0() {
+    let fx = Fixture::new("list");
+    // KEY is locked but no longer declared; OTHER is declared but not locked.
+    const OTHER: &str = "docker.io/acme/solo:1";
+    fx.nix_printing(&declared(&[OTHER]));
+    fx.lockfile("x86_64-linux");
+    let before = fs::read(fx.flake().join("pin-oci.lock")).unwrap();
+
+    let out = Command::new(env!("CARGO_BIN_EXE_pin-oci"))
+        .args([
+            "lock",
+            "--list",
+            "--flake",
+            &format!("{}#box", fx.flake().display()),
+        ])
+        .env("PATH", fx.dir.join("bin"))
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
+    assert!(stdout.contains(&format!("missing  {OTHER}")), "{stdout}");
+    assert!(stdout.contains(&format!("stale    {KEY}")), "{stdout}");
+    assert!(stdout.contains(&format!("sha256:{HEX}")), "{stdout}");
+    assert_eq!(
+        fs::read(fx.flake().join("pin-oci.lock")).unwrap(),
+        before,
+        "list is read-only"
+    );
+}
+
+#[test]
+fn list_cannot_be_combined_with_the_other_modes() {
+    let fx = Fixture::new("list-modes");
+    fx.nix_printing(&declared(&[KEY]));
+    for other in ["--check", "--update"] {
+        let out = Command::new(env!("CARGO_BIN_EXE_pin-oci"))
+            .args(["lock", "--list", other])
+            .env("PATH", fx.dir.join("bin"))
+            .output()
+            .unwrap();
+        assert_eq!(out.status.code(), Some(2), "{other}");
+        assert!(
+            stderr(&out).contains("cannot be used with"),
+            "{}",
+            stderr(&out)
+        );
+    }
 }
