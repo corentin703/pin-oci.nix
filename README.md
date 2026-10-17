@@ -31,7 +31,7 @@ Add the flake as an input:
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
 
-    pin-oci.url = "github:cprag/pin-oci.nix";
+    pin-oci.url = "github:corentin703/pin-oci.nix";
   };
 
   outputs = { nixpkgs, pin-oci, ... }: {
@@ -50,7 +50,7 @@ from your host configuration, never from the flake's own nixpkgs, so `follows` w
 align anything there. It would only make Nix build the CLI against your nixpkgs, which
 differs from what CI built and defeats the [binary cache](#binary-cache-optional).
 
-The CLI is `pin-oci.packages.<system>.default`. Run it with `nix run github:cprag/pin-oci.nix -- <args>`
+The CLI is `pin-oci.packages.<system>.default`. Run it with `nix run github:corentin703/pin-oci.nix -- <args>`
 or add it to `environment.systemPackages` / your dev shell.
 
 To write `pkgs.pin-oci` instead, opt in to the overlay. Nothing is added to your `pkgs`
@@ -97,11 +97,11 @@ Use the `extra-` forms: they add to `cache.nixos.org` instead of replacing it.
   extra-trusted-public-keys = pin-oci.cachix.org-1:rnJNoJhMLyEkTckqap7U3sTpic1xvACQlpSNqFHTPys=
   ```
 - **One-off, without touching your configuration:**
-  `nix run --accept-flake-config github:cprag/pin-oci.nix -- <args>`. The flake carries the
+  `nix run --accept-flake-config github:corentin703/pin-oci.nix -- <args>`. The flake carries the
   cache in its `nixConfig`, and `--accept-flake-config` trusts it for that command only.
   A flake input's `nixConfig` is ignored when you evaluate your own system, hence the
   `nix.settings` block above.
-- **Check that it is used:** `nix build github:cprag/pin-oci.nix --dry-run` lists the paths
+- **Check that it is used:** `nix build github:corentin703/pin-oci.nix --dry-run` lists the paths
   it would fetch (`will be fetched from 'https://pin-oci.cachix.org'`) instead of built.
   If it says `will be built`, the cache is not configured or not trusted, or the revision
   was not pushed yet.

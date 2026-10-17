@@ -111,7 +111,7 @@ inputs = {
   nixpkgs.url = "github:nixos/nixpkgs/nixos-26.05";
 
   pin-oci = {
-    url = "github:cprag/pin-oci.nix";
+    url = "github:corentin703/pin-oci.nix";
     inputs.nixpkgs.follows = "nixpkgs";
   };
 };
