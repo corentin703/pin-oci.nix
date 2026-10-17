@@ -24,17 +24,14 @@ with the command to run.
 
 ### 1. Install
 
-Add the flake as an input. `follows` keeps the module aligned with your nixpkgs:
+Add the flake as an input:
 
 ```nix
 {
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
 
-    pin-oci = {
-      url = "github:cprag/pin-oci.nix";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
+    pin-oci.url = "github:cprag/pin-oci.nix";
   };
 
   outputs = { nixpkgs, pin-oci, ... }: {
@@ -47,6 +44,11 @@ Add the flake as an input. `follows` keeps the module aligned with your nixpkgs:
   };
 }
 ```
+
+There is no `inputs.nixpkgs.follows`, on purpose. The module takes its options and `pkgs`
+from your host configuration, never from the flake's own nixpkgs, so `follows` would not
+align anything there. It would only make Nix build the CLI against your nixpkgs, which
+differs from what CI built and defeats the [binary cache](#binary-cache-optional).
 
 The CLI is `pin-oci.packages.<system>.default`. Run it with `nix run github:cprag/pin-oci.nix -- <args>`
 or add it to `environment.systemPackages` / your dev shell.
