@@ -1,0 +1,20 @@
+# The README's monitoring project, as a compose file.
+name: monitoring
+services:
+  prometheus:
+    image: caddy:2-alpine
+    ports:
+      - "9090:9090"
+    volumes:
+      - prom_data:/prometheus
+  grafana:
+    image: redis:7
+    depends_on:
+      - prometheus
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+volumes:
+  prom_data:
+  grafana_data:

@@ -500,6 +500,19 @@ Each enabled project generates `<backend>-<project>.target` (e.g. `podman-monito
 5. **Feeding the CLI:**
 Project services are lowered into `virtualisation.pin-oci.containers`, so `virtualisation.pin-oci.lockTargets` covers them with no extra code; `pin-oci lock` consumes that single option.
 
+### 6.3 Conversion from compose (`pin-oci convert`)
+
+`pin-oci convert <file> [--name <project>] [--output <path>] [--strict]` turns a docker-compose file into a module declaring a `virtualisation.pin-oci.projects.<name>`. It is a convenience of the CLI: Nix evaluation never reads a compose file, so evaluation purity (§1) is untouched. The flow is `convert`, review, then `pin-oci lock` (images stay floating tags until locked). It is a **useful subset of compose**, not compose.
+
+* **Never silent.** Every key that is not converted is reported on stderr as `pin-oci: warning: <path>: not supported, ignored`, at every level (`services.web.healthcheck`, `services.web.networks.back.aliases`, top-level `secrets`...). `x-*` extensions and the obsolete `version` are not noise. `--strict` turns any warning into exit 1 and writes nothing.
+* **Faithful or refused.** A value that cannot be written into a static module as it is makes the conversion fail (exit 2), listing every offending path: variable interpolation (`${VAR}`, `$VAR`; `$$` is a literal `$`), and unquoted numbers YAML would not hand back unchanged (`1.10` is read as `1.1`, `007` as `7`). A service without `image` fails too (`build` is named: pin-oci only runs images).
+* **YAML semantics are compose's.** Only `true` and `false` are booleans (`no`, `yes`, `on`, `n` stay text, so `DEBUG: no` is the string `no`), anchors and merge keys (`<<: *x`) are resolved.
+* **Mapping.** `image`; `command` and `entrypoint` (a list, or a string split like a shell: `entrypoint` becomes the first word, the others lead `cmd`, as `oci-containers` takes a single entrypoint word); `environment` and `labels` (map or `KEY=value` list; an entry with no value is reported); `ports` and `volumes` (short and long syntax; `tmpfs` and relative bind mounts are reported); `depends_on` (list or map, only the start order is kept: any `condition` but `service_started` is reported); `networks`; `user`; `working_dir` (`workdir`). Top-level `volumes` (`external`, `driver`) and `networks` (`external`, `internal`, `bridge` driver, first `ipam` subnet), and `name`.
+* **The default network.** `networks.default.enable = true` is emitted when any service joins compose's default network (no `networks:` key, or `default` listed). pin-oci then attaches every service to it, so a service that compose keeps off it is reported.
+* **Project name:** `--name`, else the file's `name:`, else the directory of the file; it must obey the name rule of §5.2, as every service, volume and network name.
+* **Output.** Stdout, or `--output <path>`. Deterministic: sorted names, fixed field order, the file name (not its path) in the header. Every string is a Nix string literal with `\`, `"` and `${` escaped: no compose value can run Nix code.
+* **Exit codes:** 0 converted, 1 `--strict` and something was not converted, 2 error (unreadable or invalid YAML, an unfaithful value, a missing image, a bad name).
+
 ---
 
 ## 7. Git Repository Layout
@@ -512,6 +525,8 @@ pin-oci.nix/
 │   ├── main.rs         # CLI entry point, clap subcommands
 │   ├── check.rs        # `lock --check`: targets vs lockfile
 │   ├── list.rs         # `lock --list`: declared and locked images with their status
+│   ├── convert.rs      # `convert`: compose subset to a project, warnings and errors (pure)
+│   ├── render.rs       # `convert`: project to Nix text, string escaping (pure)
 │   ├── nix.rs          # nix eval invocation, system + lockTargets parsing
 │   ├── lock.rs         # `lock` command: resolve missing, prune, write
 │   ├── registry.rs     # Runtime trait around skopeo, index / single-manifest resolution

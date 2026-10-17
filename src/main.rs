@@ -1,9 +1,11 @@
 mod check;
+mod convert;
 mod list;
 mod lock;
 mod lockfile;
 mod nix;
 mod registry;
+mod render;
 #[cfg(test)]
 mod testutil;
 
@@ -44,6 +46,20 @@ enum Command {
         #[arg(requires = "update", conflicts_with_all = ["check", "list"], value_name = "IMAGE")]
         images: Vec<String>,
     },
+    /// Convert a docker-compose file (a useful subset) into a pin-oci project module
+    Convert {
+        /// The compose file to read
+        file: PathBuf,
+        /// Project name (default: the file's `name:`, else its directory name)
+        #[arg(long)]
+        name: Option<String>,
+        /// Write the module to this file instead of stdout
+        #[arg(long)]
+        output: Option<PathBuf>,
+        /// Fail (exit 1, write nothing) if anything in the file could not be converted
+        #[arg(long)]
+        strict: bool,
+    },
     /// Print a shell completion script to stdout
     Completions {
         /// Shell to generate the script for
@@ -51,7 +67,8 @@ enum Command {
     },
 }
 
-/// Exit codes: 0 = success (`--check`: in sync), 1 = `--check` out of sync, 2 = error.
+/// Exit codes: 0 = success (`--check`: in sync), 1 = `--check` out of sync or `convert --strict`
+/// with warnings, 2 = error.
 fn main() -> ExitCode {
     match Cli::parse().command {
         Command::Lock {
@@ -60,6 +77,12 @@ fn main() -> ExitCode {
         Command::Lock {
             flake, file, list, ..
         } if list => run_list(&flake, file.as_deref()),
+        Command::Convert {
+            file,
+            name,
+            output,
+            strict,
+        } => run_convert(&file, name.as_deref(), output.as_deref(), strict),
         Command::Completions { shell } => {
             completions(shell, &mut std::io::stdout());
             ExitCode::SUCCESS
@@ -79,6 +102,56 @@ fn main() -> ExitCode {
             run_lock(&flake, file.as_deref(), &refresh)
         }
     }
+}
+
+/// Exit codes: 0 = converted, 1 = `--strict` and something was not converted, 2 = error.
+fn run_convert(file: &Path, name: Option<&str>, output: Option<&Path>, strict: bool) -> ExitCode {
+    let fail = |message: String| {
+        eprintln!("pin-oci: error: {message}");
+        ExitCode::from(2)
+    };
+    let yaml = match std::fs::read_to_string(file) {
+        Ok(yaml) => yaml,
+        Err(e) => return fail(format!("cannot read {}: {e}", file.display())),
+    };
+    let directory = std::fs::canonicalize(file).ok().and_then(|path| {
+        path.parent()?
+            .file_name()
+            .map(|d| d.to_string_lossy().into_owned())
+    });
+    // Only the file name goes in the header: the output must not depend on where it was run.
+    let source = file.file_name().map_or_else(
+        || file.display().to_string(),
+        |n| n.to_string_lossy().into_owned(),
+    );
+    let converted = match convert::convert(&yaml, name, directory.as_deref(), &source) {
+        Ok(converted) => converted,
+        Err(e) => return fail(format!("{}: {e}", file.display())),
+    };
+    for warning in &converted.warnings {
+        eprintln!("pin-oci: warning: {warning}");
+    }
+    if strict && !converted.warnings.is_empty() {
+        eprintln!(
+            "pin-oci: --strict: {} warning(s), nothing written",
+            converted.warnings.len()
+        );
+        return ExitCode::from(1);
+    }
+    match output {
+        None => print!("{}", converted.nix),
+        Some(path) => {
+            if let Err(e) = std::fs::write(path, &converted.nix) {
+                return fail(format!("cannot write {}: {e}", path.display()));
+            }
+            println!(
+                "pin-oci: wrote {} ({} warning(s))",
+                path.display(),
+                converted.warnings.len()
+            );
+        }
+    }
+    ExitCode::SUCCESS
 }
 
 /// The script is derived from the real command definition, so it cannot drift from the CLI.

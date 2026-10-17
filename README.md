@@ -413,6 +413,52 @@ evaluation, as does a `dependsOn` naming a service that is not in the project.
 
 `pin-oci lock` locks project images with the others; the CLI needs no flag for projects.
 
+### 9. Convert a compose file
+
+`pin-oci convert` turns a `docker-compose.yml` into a project module, so you do not retype it:
+
+```console
+$ pin-oci convert docker-compose.yml > shop.nix
+pin-oci: warning: services.cache.healthcheck: not supported, ignored
+pin-oci: warning: services.cache.networks.back.aliases: not supported, ignored
+$ pin-oci convert docker-compose.yml --output shop.nix   # write the file instead
+```
+
+Add `shop.nix` to the `imports` of your configuration, then lock the images (they stay
+floating tags until you do): `pin-oci lock --flake .#myhost`. This is a **useful subset of
+compose, not compose**: review the output.
+
+| Compose | Becomes |
+| --- | --- |
+| `image`, `user`, `working_dir` | `image`, `user`, `workdir` |
+| `command`, `entrypoint` (list, or a string split like a shell) | `cmd`, `entrypoint` (first word; the rest lead `cmd`) |
+| `environment`, `labels` (map or `KEY=value` list) | `environment`, `labels` |
+| `ports`, `volumes` (short and long syntax) | `ports`, `volumes` (named volumes are prefixed by the project, binds are not) |
+| `depends_on` (list or map) | `dependsOn` (start order only) |
+| `networks`, top-level `networks` (`external`, `internal`, first `ipam` subnet) | `networks`, project networks |
+| top-level `volumes` (`external`, `driver`) | project volumes |
+| `name:` | the project name (else `--name`, else the directory name) |
+
+- **Nothing is dropped silently.** Each key that is not converted is a warning on stderr:
+  `build`, `healthcheck`, `restart`, `env_file`, `deploy`, `secrets`, `container_name`,
+  `depends_on` conditions other than `service_started`, service network aliases, tmpfs
+  mounts, relative bind mounts (`./data` is resolved by the backend at run time, not
+  relative to the file)... `--strict` makes any warning an error (exit 1, nothing written).
+- **A value that cannot be kept as written is an error** (exit 2), listing every path:
+  `${VAR}` interpolation (write the value in the file; `$$` is a literal `$`) and unquoted
+  numbers that YAML rewrites (`1.10` reads as `1.1`, `007` as `7`: quote them). A service
+  with only `build:` is an error: pin-oci runs images.
+- **YAML as compose reads it:** only `true` and `false` are booleans (`DEBUG: no` stays the
+  text `no`), anchors and `<<:` merge keys are resolved. Integers written in another base
+  (`0x10`, `1_000`) are read by the YAML parser before pin-oci sees them, so they are not
+  detected: quote such values.
+- **The default network.** A service with no `networks:` key joins compose's default network,
+  so the module enables `networks.default`. pin-oci attaches *every* service to it, so a
+  service that compose keeps off it is reported.
+
+Exit codes: 0 converted, 1 `--strict` with warnings, 2 error. The command needs neither `nix`
+nor `skopeo`, and Nix evaluation never reads a compose file.
+
 ### Image references
 
 References are normalized to a canonical key (the key of `pin-oci.lock`):
@@ -513,6 +559,7 @@ registry).
 | Rust end-to-end | `tests/check_cli.rs`, `tests/lock_cli.rs` | The real binary against a fake `nix` and a fake `skopeo` placed in `PATH`. `tests/fixtures/` holds real `skopeo` outputs captured once. |
 | Nix modules | `tests/nix/default.nix`, `infra.nix`, `projects.nix`, `resources.nix` (run by `nix flake check`) | Reference normalization, module evaluation against fixture lockfiles (present / missing / wrong architecture / corrupt), the generated systemd units, laziness of `lockTargets`, container ordering, and the exact expression the CLI evaluates (`src/apply.nix`, shared with Rust). |
 | Overlay | `tests/nix/overlay.nix` | `overlays.default` provides `pkgs.pin-oci` (same derivation as the package), adds nothing else, and `environment.systemPackages = [ pkgs.pin-oci ]` resolves; without the overlay `pkgs` has no `pin-oci`. |
+| Convert | `src/convert.rs`, `src/render.rs`, `tests/convert_cli.rs`, `tests/nix/convert.nix`, `tests/fixtures/compose/` | Every mapped key and every warning, the errors (interpolation, rewritten numbers, no image, bad names), YAML 1.2 booleans and merge keys, Nix escaping of hostile values; the binary against reference files (compose in, Nix out, byte for byte); and those same reference modules evaluated by the real module, offline. |
 | Completions | `tests/completions_cli.rs`, `tests/nix/completions.nix` | `pin-oci completions <shell>` for every shell (no `nix`, no `skopeo`, usage errors), and the package ships the bash, zsh and fish scripts, equal to what the packaged binary prints. |
 | Binary cache | `tests/nix/binary-cache.nix` | The flake's `nixConfig`: substituter, public key, key matching its substituter, `extra-*` only (defaults never replaced). |
 | Generated scripts | `tests/nix/infra-scripts.nix` | The network and volume unit scripts executed against a stateful fake backend: idempotence, flags, recreation, failure propagation. |
@@ -549,6 +596,8 @@ pin-oci.nix/
 │   ├── main.rs         # CLI entry point, clap subcommands
 │   ├── check.rs        # `lock --check`: declared images vs lockfile
 │   ├── list.rs         # `lock --list`: declared and locked images with their status
+│   ├── convert.rs      # `convert`: compose subset to a project, warnings and errors
+│   ├── render.rs       # `convert`: project to Nix text, string escaping
 │   ├── lock.rs         # `lock`: resolve missing, prune, write
 │   ├── nix.rs          # nix eval boundary, <flake>#<host> handling
 │   ├── registry.rs     # skopeo boundary, index / single-manifest resolution

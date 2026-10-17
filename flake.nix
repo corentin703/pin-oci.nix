@@ -118,7 +118,10 @@
                 ];
                 src = pkgs.lib.fileset.toSource {
                   root = ./.;
-                  fileset = pkgs.lib.fileset.fileFilter (file: file.hasExt "nix") ./.;
+                  # Reference modules are generated output, compared byte for byte by the Rust tests.
+                  fileset = pkgs.lib.fileset.difference (pkgs.lib.fileset.fileFilter (
+                    file: file.hasExt "nix"
+                  ) ./.) ./tests/fixtures/compose;
                 };
               }
               ''

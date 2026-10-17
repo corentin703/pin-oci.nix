@@ -1,0 +1,50 @@
+# Exercises most of the subset: anchors, both syntaxes, networks, external volumes,
+# and two keys that cannot be converted (reported, never silent).
+name: shop
+x-defaults: &defaults
+  user: "1000:1000"
+  labels:
+    - "team=platform"
+services:
+  web:
+    <<: *defaults
+    image: caddy:2-alpine
+    entrypoint: ["/usr/bin/caddy", "run"]
+    command: caddy file-server --root "/srv/site docs"
+    environment:
+      - MODE=prod
+      - GREETING=hello world
+      - DEBUG=no
+    ports:
+      - "80:80"
+      - target: 443
+        published: 8443
+        protocol: tcp
+        host_ip: 127.0.0.1
+    volumes:
+      - site:/srv
+      - /etc/caddy:/etc/caddy:ro
+      - shared:/shared
+    depends_on:
+      cache:
+        condition: service_started
+    networks: [front, back]
+    working_dir: /srv
+  cache:
+    image: redis:7
+    networks:
+      back:
+        aliases: [redis]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+volumes:
+  site:
+  shared:
+    external: true
+networks:
+  front:
+  back:
+    internal: true
+    ipam:
+      config:
+        - subnet: 10.30.0.0/24
