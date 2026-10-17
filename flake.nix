@@ -3,6 +3,12 @@
 
   inputs.nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
 
+  # Binary cache for packages.<system>.pin-oci (pushed by CI). Mirrored in the README.
+  nixConfig = {
+    extra-substituters = [ "https://pin-oci.cachix.org" ];
+    extra-trusted-public-keys = [ "pin-oci.cachix.org-1:rnJNoJhMLyEkTckqap7U3sTpic1xvACQlpSNqFHTPys=" ];
+  };
+
   outputs =
     { self, nixpkgs }:
     let
@@ -110,6 +116,10 @@
           module-tests = import ./tests/nix {
             inherit pkgs nixpkgs;
             module = self.nixosModules.default;
+          };
+          binary-cache = import ./tests/nix/binary-cache.nix {
+            inherit pkgs;
+            flake = import ./flake.nix;
           };
           infra-scripts = import ./tests/nix/infra-scripts.nix {
             inherit pkgs nixpkgs;

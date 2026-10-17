@@ -51,6 +51,22 @@ Add the flake as an input. `follows` keeps the module aligned with your nixpkgs:
 The CLI is `pin-oci.packages.<system>.default`. Run it with `nix run github:cprag/pin-oci.nix -- <args>`
 or add it to `environment.systemPackages` / your dev shell.
 
+### Binary cache (optional)
+
+CI pushes `pin-oci` to a public Cachix cache. Without it, the CLI is built from source
+(Rust toolchain included). In your NixOS configuration:
+
+```nix
+nix.settings = {
+  extra-substituters = [ "https://pin-oci.cachix.org" ];
+  extra-trusted-public-keys = [ "pin-oci.cachix.org-1:rnJNoJhMLyEkTckqap7U3sTpic1xvACQlpSNqFHTPys=" ];
+};
+```
+
+The flake also carries this in `nixConfig`, which `nix run` / `nix build` on the flake offer
+to apply (`--accept-flake-config`). A flake input's `nixConfig` is ignored when you evaluate
+your own system, hence the setting above.
+
 It needs `nix` and `skopeo` at run time. The packaged binary already carries `skopeo` in
 its `PATH`.
 
