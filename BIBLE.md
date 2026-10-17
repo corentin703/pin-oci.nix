@@ -326,7 +326,7 @@ The CLI never parses image references and holds no registry client or credential
 
 #### Commands:
 
-* `pin-oci lock [--flake <ref>] [--file <path>]`:
+* `pin-oci lock [--flake <ref>] [--file <path>]`, and its mode `--check` below:
 1. Evaluates the configuration without building, retrieving the host system and the targets in a single evaluation:
 ```bash
 nix eval --json <flake>#nixosConfigurations."<host>".config \
@@ -350,7 +350,7 @@ nix eval --json <flake>#nixosConfigurations."<host>".config \
 **Registry access and authentication** are delegated to `skopeo` (runtime dependency, wrapped into the `pin-oci` package and provided by the dev shells), which reads the host's own credentials (`REGISTRY_AUTH_FILE`, `${XDG_RUNTIME_DIR}/containers/auth.json`, `~/.docker/config.json`) and credential helpers. The CLI embeds no HTTP client and no credential handling, and does not depend on `virtualisation.oci-containers.backend`.
 
 
-* `pin-oci check [--flake <ref>] [--file <path>]`:
+* `pin-oci lock --check [--flake <ref>] [--file <path>]` (there is no separate `check` subcommand):
 Checks that every key of `lockTargets` has an entry for the host platform in the lockfile, without modifying any file. It evaluates the same `{ system; targets }` as `lock` (only the target keys are used), never the lockfile. Lockfile entries absent from `lockTargets` are ignored (only `lock` prunes them); a missing lockfile counts as empty.
 Exit codes: 0 = in sync, 1 = out of sync, 2 = error (nix failure, unreadable or invalid lockfile, remote flake without `--file`). Suited for CI steps.
 
@@ -502,7 +502,7 @@ pin-oci.nix/
 ├── Cargo.toml
 ├── src/
 │   ├── main.rs         # CLI entry point, clap subcommands
-│   ├── check.rs        # `check` command: targets vs lockfile
+│   ├── check.rs        # `lock --check`: targets vs lockfile
 │   ├── nix.rs          # nix eval invocation, system + lockTargets parsing
 │   ├── lock.rs         # `lock` command: resolve missing, prune, write
 │   ├── registry.rs     # Runtime trait around skopeo, index / single-manifest resolution

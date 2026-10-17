@@ -72,6 +72,15 @@ esac"#,
         fs::read_to_string(self.dir.join("skopeo.log")).map_or(0, |log| log.lines().count())
     }
 
+    fn check(&self) -> Output {
+        let flake = format!("{}#box", self.dir.join("flake").display());
+        Command::new(env!("CARGO_BIN_EXE_pin-oci"))
+            .args(["lock", "--check", "--flake", &flake])
+            .env("PATH", self.dir.join("bin"))
+            .output()
+            .unwrap()
+    }
+
     fn run(&self, command: &str) -> Output {
         let flake = format!("{}#box", self.dir.join("flake").display());
         Command::new(env!("CARGO_BIN_EXE_pin-oci"))
@@ -92,11 +101,7 @@ fn lock_writes_the_lockfile_and_check_then_passes() {
     fx.nix("x86_64-linux", &[CADDY, SOLO]);
     fx.skopeo();
 
-    assert_eq!(
-        fx.run("check").status.code(),
-        Some(1),
-        "unlocked before lock"
-    );
+    assert_eq!(fx.check().status.code(), Some(1), "unlocked before lock");
 
     let out = fx.run("lock");
     assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
@@ -116,7 +121,7 @@ fn lock_writes_the_lockfile_and_check_then_passes() {
     }
     assert!(lock.ends_with("}\n"));
 
-    let out = fx.run("check");
+    let out = fx.check();
     assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
 }
 

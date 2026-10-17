@@ -22,29 +22,23 @@ struct Cli {
 enum Command {
     /// Resolve declared images to per-platform digests and write pin-oci.lock
     Lock {
-        /// Flake reference to evaluate
-        #[arg(long, default_value = ".")]
-        flake: String,
-        /// Lockfile to write (default: <flake root>/pin-oci.lock)
-        #[arg(long)]
-        file: Option<PathBuf>,
-    },
-    /// Check that every declared image is present in the lockfile
-    Check {
         /// Flake reference to evaluate, as <flake>#<host>
         #[arg(long, default_value = ".")]
         flake: String,
-        /// Lockfile to read (default: <flake root>/pin-oci.lock)
+        /// Lockfile to read or write (default: <flake root>/pin-oci.lock)
         #[arg(long)]
         file: Option<PathBuf>,
+        /// Only check that every declared image is in the lockfile; change nothing
+        #[arg(long)]
+        check: bool,
     },
 }
 
 /// Exit codes: 0 = in sync, 1 = out of sync, 2 = error.
 fn main() -> ExitCode {
     match Cli::parse().command {
-        Command::Lock { flake, file } => run_lock(&flake, file.as_deref()),
-        Command::Check { flake, file } => run_check(&flake, file.as_deref()),
+        Command::Lock { flake, file, check } if check => run_check(&flake, file.as_deref()),
+        Command::Lock { flake, file, .. } => run_lock(&flake, file.as_deref()),
     }
 }
 
@@ -89,11 +83,11 @@ mod tests {
     #[test]
     fn lock_defaults() {
         match parse(&["lock"]).unwrap().command {
-            Command::Lock { flake, file } => {
+            Command::Lock { flake, file, check } => {
                 assert_eq!(flake, ".");
                 assert_eq!(file, None);
+                assert!(!check);
             }
-            other => panic!("unexpected command: {other:?}"),
         }
     }
 
@@ -103,37 +97,32 @@ mod tests {
             .unwrap()
             .command
         {
-            Command::Lock { flake, file } => {
+            Command::Lock { flake, file, check } => {
                 assert_eq!(flake, "/etc/nixos#host");
                 assert_eq!(file, Some(PathBuf::from("x.lock")));
+                assert!(!check);
             }
-            other => panic!("unexpected command: {other:?}"),
         }
     }
 
     #[test]
-    fn check_defaults() {
-        match parse(&["check"]).unwrap().command {
-            Command::Check { flake, file } => {
-                assert_eq!(flake, ".");
-                assert_eq!(file, None);
-            }
-            other => panic!("unexpected command: {other:?}"),
-        }
-    }
-
-    #[test]
-    fn check_with_flake_and_file() {
-        match parse(&["check", "--flake", ".#box", "--file", "x.lock"])
+    fn lock_check_with_flake_and_file() {
+        match parse(&["lock", "--check", "--flake", ".#box", "--file", "x.lock"])
             .unwrap()
             .command
         {
-            Command::Check { flake, file } => {
+            Command::Lock { flake, file, check } => {
                 assert_eq!(flake, ".#box");
                 assert_eq!(file, Some(PathBuf::from("x.lock")));
+                assert!(check);
             }
-            other => panic!("unexpected command: {other:?}"),
         }
+    }
+
+    #[test]
+    fn check_is_no_longer_a_subcommand() {
+        assert!(parse(&["check"]).is_err());
+        assert!(parse(&["check", "--flake", ".#box"]).is_err());
     }
 
     #[test]

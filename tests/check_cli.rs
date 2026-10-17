@@ -1,4 +1,4 @@
-//! End-to-end: the `pin-oci check` binary against a fake `nix` on PATH. Offline.
+//! End-to-end: `pin-oci lock --check` (the real binary) against a fake `nix` on PATH. Offline.
 
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
@@ -49,7 +49,7 @@ impl Fixture {
 
     fn run(&self, args: &[&str]) -> Output {
         Command::new(env!("CARGO_BIN_EXE_pin-oci"))
-            .arg("check")
+            .args(["lock", "--check"])
             .args(args)
             .env("PATH", self.dir.join("bin"))
             .output()
@@ -176,4 +176,22 @@ fn explicit_file_is_used_for_a_remote_flake() {
         file.to_str().unwrap(),
     ]);
     assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+}
+
+#[test]
+fn the_old_check_subcommand_is_rejected() {
+    let fx = Fixture::new("old-check");
+    fx.nix_printing(&declared(&[KEY]));
+
+    let out = Command::new(env!("CARGO_BIN_EXE_pin-oci"))
+        .args(["check", "--flake", &format!("{}#box", fx.flake().display())])
+        .env("PATH", fx.dir.join("bin"))
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(2));
+    assert!(
+        stderr(&out).contains("unrecognized subcommand"),
+        "{}",
+        stderr(&out)
+    );
 }

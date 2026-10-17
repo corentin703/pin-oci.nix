@@ -11,7 +11,7 @@ network, and an image without a valid digest for the host platform fails evaluat
 with the command to run.
 
 > **Status.** All three milestones of [`BIBLE.md`](BIBLE.md) are implemented: the pinning
-> engine (`pin-oci lock` / `pin-oci check`), shared networks and volumes, and compose-style
+> engine (`pin-oci lock` / `pin-oci lock --check`), shared networks and volumes, and compose-style
 > projects.
 
 - [User manual](#user-manual)
@@ -196,11 +196,11 @@ unsupported is an error.
 ### 4. Check (CI)
 
 ```console
-$ pin-oci check --flake .#myhost
+$ pin-oci lock --check --flake .#myhost
 pin-oci: 1 image(s) pinned for 'x86_64-linux' in ./pin-oci.lock
 ```
 
-`check` never modifies anything and never contacts a registry. It verifies that every
+`lock --check` never modifies anything and never contacts a registry. It verifies that every
 declared image has an entry for the host platform.
 
 | Exit code | Meaning |
@@ -209,8 +209,8 @@ declared image has an entry for the host platform.
 | 1 | out of sync: missing images are listed with the command to run |
 | 2 | error: `nix` failed, unreadable or invalid lockfile, remote flake without `--file` |
 
-Entries in the lockfile that are no longer declared do not make `check` fail; only
-`lock` prunes them.
+Entries in the lockfile that are no longer declared do not make `--check` fail; only
+a plain `lock` prunes them.
 
 ### 5. Rebuild
 
@@ -227,7 +227,7 @@ then make it visible to the flake:
   git add pin-oci.lock
 ```
 
-`pin-oci lock` and `check` evaluate only the list of images and the host platform, never
+`pin-oci lock` and `lock --check` evaluate only the list of images and the host platform, never
 the lockfile, so they work on a configuration that does not build yet.
 
 ### 6. Networks and volumes
@@ -448,7 +448,7 @@ $ cargo clippy --all-targets -- -D warnings
 $ cargo test                 # Rust unit + end-to-end tests
 $ nix flake check            # builds the package (runs cargo test) + Nix module tests
 $ nix build                  # the pin-oci binary, wrapped with skopeo
-$ nix run . -- check --flake path/to/flake#host
+$ nix run . -- lock --check --flake path/to/flake#host
 ```
 
 `devenv.yaml` and `flake.nix` pin nixpkgs independently; update them with `devenv update`
@@ -498,7 +498,7 @@ break the code and check that a test fails.
 pin-oci.nix/
 ├── src/
 │   ├── main.rs         # CLI entry point, clap subcommands
-│   ├── check.rs        # `check`: declared images vs lockfile
+│   ├── check.rs        # `lock --check`: declared images vs lockfile
 │   ├── lock.rs         # `lock`: resolve missing, prune, write
 │   ├── nix.rs          # nix eval boundary, <flake>#<host> handling
 │   ├── registry.rs     # skopeo boundary, index / single-manifest resolution
