@@ -71,6 +71,18 @@ unless you do:
 It needs `nix` and `skopeo` at run time. The packaged binary already carries `skopeo` in
 its `PATH`.
 
+#### Shell completion
+
+The package installs completion scripts for bash, zsh and fish, so they are available as
+soon as `pin-oci` is in `environment.systemPackages` (enable `programs.bash.completion`,
+or `programs.zsh.enable` / `programs.fish.enable`, as usual on NixOS). With `nix run`, or for
+another shell, print the script yourself:
+
+```console
+$ pin-oci completions bash   # also zsh, fish, elvish, powershell
+$ source <(pin-oci completions bash)
+```
+
 #### Binary cache (optional)
 
 CI builds `pin-oci` and pushes it to a public [Cachix](https://pin-oci.cachix.org) cache.
@@ -501,6 +513,7 @@ registry).
 | Rust end-to-end | `tests/check_cli.rs`, `tests/lock_cli.rs` | The real binary against a fake `nix` and a fake `skopeo` placed in `PATH`. `tests/fixtures/` holds real `skopeo` outputs captured once. |
 | Nix modules | `tests/nix/default.nix`, `infra.nix`, `projects.nix`, `resources.nix` (run by `nix flake check`) | Reference normalization, module evaluation against fixture lockfiles (present / missing / wrong architecture / corrupt), the generated systemd units, laziness of `lockTargets`, container ordering, and the exact expression the CLI evaluates (`src/apply.nix`, shared with Rust). |
 | Overlay | `tests/nix/overlay.nix` | `overlays.default` provides `pkgs.pin-oci` (same derivation as the package), adds nothing else, and `environment.systemPackages = [ pkgs.pin-oci ]` resolves; without the overlay `pkgs` has no `pin-oci`. |
+| Completions | `tests/completions_cli.rs`, `tests/nix/completions.nix` | `pin-oci completions <shell>` for every shell (no `nix`, no `skopeo`, usage errors), and the package ships the bash, zsh and fish scripts, equal to what the packaged binary prints. |
 | Binary cache | `tests/nix/binary-cache.nix` | The flake's `nixConfig`: substituter, public key, key matching its substituter, `extra-*` only (defaults never replaced). |
 | Generated scripts | `tests/nix/infra-scripts.nix` | The network and volume unit scripts executed against a stateful fake backend: idempotence, flags, recreation, failure propagation. |
 | NixOS VM | `tests/nix/vm-infra.nix`, `vm-projects.nix` | Real `podman` and `docker` in a VM: resources created at boot, flags applied, units idempotent, container units ordered after their resources; for projects, prefixed and external resources, `dependsOn` ordering, and services resolving each other by bare name on the default network. Needs KVM (`system-features = kvm nixos-test`). |

@@ -43,9 +43,17 @@
             ];
           };
           cargoLock.lockFile = ./Cargo.lock;
-          nativeBuildInputs = [ pkgs.makeWrapper ];
+          nativeBuildInputs = [
+            pkgs.makeWrapper
+            pkgs.installShellFiles
+          ];
+          # The completion scripts come from the binary itself, so they follow the CLI.
           # Runtime dependency: registry access goes through skopeo.
           postInstall = ''
+            installShellCompletion --cmd pin-oci \
+              --bash <($out/bin/pin-oci completions bash) \
+              --zsh <($out/bin/pin-oci completions zsh) \
+              --fish <($out/bin/pin-oci completions fish)
             wrapProgram $out/bin/pin-oci --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.skopeo ]}
           '';
           meta.mainProgram = "pin-oci";
@@ -126,6 +134,9 @@
           binary-cache = import ./tests/nix/binary-cache.nix {
             inherit pkgs;
             flake = import ./flake.nix;
+          };
+          completions = import ./tests/nix/completions.nix {
+            inherit pkgs pin-oci;
           };
           overlay = import ./tests/nix/overlay.nix {
             inherit pkgs nixpkgs;

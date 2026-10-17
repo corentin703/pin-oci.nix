@@ -359,6 +359,9 @@ Exit codes: 0 = in sync, 1 = out of sync, 2 = error (nix failure, unreadable or 
 * `pin-oci lock --list [--flake <ref>] [--file <path>]`:
 Lists every key that is declared (`lockTargets`) or locked, sorted, with its status for the host system: `locked` (declared, has a digest for the host system, which is shown in full), `missing` (declared, no entry for the host system, even if other systems are locked) or `stale` (locked, no longer declared). It evaluates the same `{ system; targets }` as `check`, reads the lockfile (absent = empty) and writes nothing; it takes no `Runtime`, so it cannot contact a registry. Exit codes: 0 on success whatever the statuses (use `--check` to gate CI), 2 on error. `--list` excludes `--check` and `--update`.
 
+* `pin-oci completions <shell>`:
+Prints the completion script for `bash`, `zsh`, `fish`, `elvish` or `powershell` on stdout (`clap_complete`, generated from the `clap` definition so it cannot drift from the CLI). It touches no file and needs neither `nix` nor `skopeo`; an unknown or missing shell is a usage error (exit 2). The Nix package installs the bash, zsh and fish scripts (`installShellCompletion`, produced by the built binary itself), so they are in place as soon as `pin-oci` is in `environment.systemPackages`.
+
 `--flake` takes `<flake>#<host>` and targets `nixosConfigurations."<host>".config`; a reference without `#<host>` is an error.
 
 ---

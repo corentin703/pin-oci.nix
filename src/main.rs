@@ -7,10 +7,12 @@ mod registry;
 #[cfg(test)]
 mod testutil;
 
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand};
+use clap_complete::Shell;
 
 #[derive(Debug, Parser)]
 #[command(name = "pin-oci", version, about)]
@@ -42,6 +44,11 @@ enum Command {
         #[arg(requires = "update", conflicts_with_all = ["check", "list"], value_name = "IMAGE")]
         images: Vec<String>,
     },
+    /// Print a shell completion script to stdout
+    Completions {
+        /// Shell to generate the script for
+        shell: Shell,
+    },
 }
 
 /// Exit codes: 0 = success (`--check`: in sync), 1 = `--check` out of sync, 2 = error.
@@ -53,6 +60,10 @@ fn main() -> ExitCode {
         Command::Lock {
             flake, file, list, ..
         } if list => run_list(&flake, file.as_deref()),
+        Command::Completions { shell } => {
+            completions(shell, &mut std::io::stdout());
+            ExitCode::SUCCESS
+        }
         Command::Lock {
             flake,
             file,
@@ -68,6 +79,11 @@ fn main() -> ExitCode {
             run_lock(&flake, file.as_deref(), &refresh)
         }
     }
+}
+
+/// The script is derived from the real command definition, so it cannot drift from the CLI.
+fn completions(shell: Shell, out: &mut dyn Write) {
+    clap_complete::generate(shell, &mut Cli::command(), "pin-oci", out);
 }
 
 fn run_lock(flake: &str, file: Option<&Path>, refresh: &lock::Refresh) -> ExitCode {
@@ -121,86 +137,79 @@ mod tests {
         Cli::try_parse_from(std::iter::once("pin-oci").chain(args.iter().copied()))
     }
 
+    /// The arguments of a successfully parsed `lock` invocation.
+    #[derive(Debug)]
+    struct LockArgs {
+        flake: String,
+        file: Option<PathBuf>,
+        check: bool,
+        list: bool,
+        update: bool,
+        images: Vec<String>,
+    }
+
+    fn lock_args(args: &[&str]) -> LockArgs {
+        match parse(args).unwrap().command {
+            Command::Lock {
+                flake,
+                file,
+                check,
+                list,
+                update,
+                images,
+            } => LockArgs {
+                flake,
+                file,
+                check,
+                list,
+                update,
+                images,
+            },
+            other => panic!("unexpected command: {other:?}"),
+        }
+    }
+
     #[test]
     fn lock_defaults() {
-        match parse(&["lock"]).unwrap().command {
-            Command::Lock {
-                flake, file, check, ..
-            } => {
-                assert_eq!(flake, ".");
-                assert_eq!(file, None);
-                assert!(!check);
-            }
-        }
+        let a = lock_args(&["lock"]);
+        assert_eq!(a.flake, ".");
+        assert_eq!(a.file, None);
+        assert!(!a.check && !a.list && !a.update && a.images.is_empty());
     }
 
     #[test]
     fn lock_with_flake_and_file() {
-        match parse(&["lock", "--flake", "/etc/nixos#host", "--file", "x.lock"])
-            .unwrap()
-            .command
-        {
-            Command::Lock {
-                flake, file, check, ..
-            } => {
-                assert_eq!(flake, "/etc/nixos#host");
-                assert_eq!(file, Some(PathBuf::from("x.lock")));
-                assert!(!check);
-            }
-        }
+        let a = lock_args(&["lock", "--flake", "/etc/nixos#host", "--file", "x.lock"]);
+        assert_eq!(a.flake, "/etc/nixos#host");
+        assert_eq!(a.file, Some(PathBuf::from("x.lock")));
+        assert!(!a.check);
     }
 
     #[test]
     fn lock_check_with_flake_and_file() {
-        match parse(&["lock", "--check", "--flake", ".#box", "--file", "x.lock"])
-            .unwrap()
-            .command
-        {
-            Command::Lock {
-                flake, file, check, ..
-            } => {
-                assert_eq!(flake, ".#box");
-                assert_eq!(file, Some(PathBuf::from("x.lock")));
-                assert!(check);
-            }
-        }
+        let a = lock_args(&["lock", "--check", "--flake", ".#box", "--file", "x.lock"]);
+        assert_eq!(a.flake, ".#box");
+        assert_eq!(a.file, Some(PathBuf::from("x.lock")));
+        assert!(a.check);
     }
 
     #[test]
     fn update_takes_optional_canonical_keys() {
-        match parse(&["lock", "--update"]).unwrap().command {
-            Command::Lock { update, images, .. } => assert!(update && images.is_empty()),
-        }
-        match parse(&["lock", "--update", "docker.io/library/caddy:2-alpine", "b"])
-            .unwrap()
-            .command
-        {
-            Command::Lock { update, images, .. } => {
-                assert!(update);
-                assert_eq!(images, ["docker.io/library/caddy:2-alpine", "b"]);
-            }
-        }
+        let a = lock_args(&["lock", "--update"]);
+        assert!(a.update && a.images.is_empty());
+
+        let a = lock_args(&["lock", "--update", "docker.io/library/caddy:2-alpine", "b"]);
+        assert!(a.update);
+        assert_eq!(a.images, ["docker.io/library/caddy:2-alpine", "b"]);
     }
 
     #[test]
     fn list_is_a_mode_of_its_own() {
-        match parse(&["lock", "--list", "--flake", ".#box", "--file", "x.lock"])
-            .unwrap()
-            .command
-        {
-            Command::Lock {
-                flake,
-                file,
-                list,
-                check,
-                update,
-                ..
-            } => {
-                assert!(list && !check && !update);
-                assert_eq!(flake, ".#box");
-                assert_eq!(file, Some(PathBuf::from("x.lock")));
-            }
-        }
+        let a = lock_args(&["lock", "--list", "--flake", ".#box", "--file", "x.lock"]);
+        assert!(a.list && !a.check && !a.update);
+        assert_eq!(a.flake, ".#box");
+        assert_eq!(a.file, Some(PathBuf::from("x.lock")));
+
         assert!(parse(&["lock", "--list", "--check"]).is_err());
         assert!(parse(&["lock", "--list", "--update"]).is_err());
         assert!(parse(&["lock", "--list", "docker.io/library/caddy:2-alpine"]).is_err());
@@ -217,6 +226,41 @@ mod tests {
     fn check_is_no_longer_a_subcommand() {
         assert!(parse(&["check"]).is_err());
         assert!(parse(&["check", "--flake", ".#box"]).is_err());
+    }
+
+    fn script(shell: Shell) -> String {
+        let mut out = Vec::new();
+        completions(shell, &mut out);
+        String::from_utf8(out).unwrap()
+    }
+
+    #[test]
+    fn completions_cover_every_mode_for_each_shell() {
+        for shell in [Shell::Bash, Shell::Zsh, Shell::Fish] {
+            let script = script(shell);
+            for word in ["pin-oci", "lock", "completions"] {
+                assert!(script.contains(word), "{shell}: missing '{word}'");
+            }
+            for flag in ["check", "update", "list", "flake", "file"] {
+                // fish declares long flags as `-l <name>`, bash and zsh spell them out.
+                let spelled = if shell == Shell::Fish {
+                    format!("-l {flag}")
+                } else {
+                    format!("--{flag}")
+                };
+                assert!(script.contains(&spelled), "{shell}: missing '{spelled}'");
+            }
+        }
+    }
+
+    #[test]
+    fn completions_take_a_known_shell() {
+        match parse(&["completions", "zsh"]).unwrap().command {
+            Command::Completions { shell } => assert_eq!(shell, Shell::Zsh),
+            other => panic!("unexpected command: {other:?}"),
+        }
+        assert!(parse(&["completions"]).is_err(), "the shell is required");
+        assert!(parse(&["completions", "tcsh"]).is_err(), "unknown shell");
     }
 
     #[test]
