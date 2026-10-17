@@ -104,18 +104,17 @@ Index entries whose platform is `unknown/unknown` (attestation manifests) are ig
 
 The submodule replicates the exact options of `virtualisation.oci-containers.containers.<name>`. They are derived from the host configuration (`options.virtualisation.oci-containers.containers`), never imported through `<nixpkgs>` / `NIX_PATH`. The `image` field receives an unresolved string (`"image:tag"`).
 
-Consumption as a flake input; `follows` keeps the module aligned with the host's nixpkgs:
+Consumption as a flake input:
 
 ```nix
 inputs = {
   nixpkgs.url = "github:nixos/nixpkgs/nixos-26.05";
 
-  pin-oci = {
-    url = "github:corentin703/pin-oci.nix";
-    inputs.nixpkgs.follows = "nixpkgs";
-  };
+  pin-oci.url = "github:corentin703/pin-oci.nix";
 };
 ```
+
+There is deliberately no `inputs.nixpkgs.follows`. The module takes its options and `pkgs` from the host configuration, never from the flake's own nixpkgs, so `follows` aligns nothing there. It would only make Nix build the CLI against the host's nixpkgs, which differs from what CI built and defeats the binary cache.
 
 The CLI is also exposed as an overlay, **opt-in**: `overlays.default` adds a single attribute, `pin-oci`, which is `packages.<system>.pin-oci` unchanged (same derivation, so the binary cache applies). Neither the module nor the flake applies it implicitly; the host does:
 
