@@ -26,6 +26,7 @@ let
   inherit (import ../../modules/refs.nix { inherit lib; }) parseRef;
 
   apply = import ../../src/apply.nix;
+  applyOptional = import ../../src/apply-optional.nix;
 
   caddyDigest =
     "sha256:" + lib.concatStrings (lib.replicate 64 (if system == "aarch64-linux" then "c" else "a"));
@@ -256,6 +257,19 @@ let
           tag = "2-alpine";
         };
       };
+    };
+
+    testOptionalContractMatchesTheContractWhenEnabled = {
+      expr = applyOptional missing;
+      expected = apply missing;
+    };
+    testOptionalContractIsNullWhenPinOciIsNotEnabled = {
+      expr = applyOptional (eval [ { virtualisation.pin-oci.enable = false; } ]);
+      expected = null;
+    };
+    testOptionalContractIsNullWhenTheModuleIsAbsent = {
+      expr = applyOptional { virtualisation = { }; };
+      expected = null;
     };
 
     # ---- pass-through and edge cases ----

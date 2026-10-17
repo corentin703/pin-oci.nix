@@ -9,9 +9,9 @@ const LOCKFILE_NAME: &str = "pin-oci.lock";
 
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum Status {
-    /// Declared and locked for the host platform.
+    /// Declared and locked for every platform of the hosts declaring it.
     Locked,
-    /// Declared, but with no entry for the host platform.
+    /// Declared, but with no entry for at least one of those platforms.
     Missing,
     /// In the lockfile, no longer declared.
     Stale,
@@ -31,14 +31,18 @@ impl Status {
 pub(crate) struct Entry {
     key: String,
     status: Status,
-    /// Digest for the host platform, when the lockfile has one.
-    digest: Option<String>,
+    /// Hosts declaring the image; empty for a stale one.
+    hosts: Vec<String>,
+    /// `(system, digest)` the lockfile has for the platforms the image is needed on (every
+    /// locked platform for a stale image).
+    digests: Vec<(String, String)>,
 }
 
 #[derive(Debug)]
 pub(crate) struct Listing {
     file: PathBuf,
-    system: String,
+    systems: String,
+    skipped_note: String,
     entries: Vec<Entry>,
 }
 
@@ -46,26 +50,50 @@ impl Listing {
     pub(crate) fn message(&self) -> String {
         if self.entries.is_empty() {
             return format!(
-                "pin-oci: no image declared or locked for '{}' in {}",
-                self.system,
-                self.file.display()
+                "pin-oci: no image declared or locked for '{}' in {}{}",
+                self.systems,
+                self.file.display(),
+                self.skipped_note
             );
         }
-        let width = self.entries.iter().map(|e| e.key.len()).max().unwrap_or(0);
-        let lines: String = self
+        let hosts: Vec<String> = self
             .entries
             .iter()
-            .map(|e| {
-                let digest = e.digest.as_deref().unwrap_or("");
-                format!("\n  {:<7}  {:<width$}  {digest}", e.status.label(), e.key)
-                    .trim_end()
-                    .to_owned()
+            .map(|e| match e.hosts.as_slice() {
+                [] => "-".to_owned(),
+                hosts => hosts.join(","),
             })
             .collect();
+        let key_width = self.entries.iter().map(|e| e.key.len()).max().unwrap_or(0);
+        let hosts_width = hosts.iter().map(String::len).max().unwrap_or(0);
+        let key_width = key_width.max("IMAGE".len());
+        let hosts_width = hosts_width.max("HOSTS".len());
+        let row = |status: &str, key: &str, hosts: &str, digest: &str| {
+            format!("\n  {status:<7}  {key:<key_width$}  {hosts:<hosts_width$}  {digest}")
+                .trim_end()
+                .to_owned()
+        };
+        let mut lines = row("STATUS", "IMAGE", "HOSTS", "DIGEST");
+        for (e, hosts) in self.entries.iter().zip(&hosts) {
+            let mut digests = e
+                .digests
+                .iter()
+                .map(|(system, digest)| format!("{system} {digest}"));
+            lines += &row(
+                e.status.label(),
+                &e.key,
+                hosts,
+                &digests.next().unwrap_or_default(),
+            );
+            for digest in digests {
+                lines += &row("", "", "", &digest);
+            }
+        }
         format!(
-            "pin-oci: images for '{}' in {}{lines}",
-            self.system,
-            self.file.display()
+            "pin-oci: images for '{}' in {}{lines}{}",
+            self.systems,
+            self.file.display(),
+            self.skipped_note
         )
     }
 }
@@ -116,25 +144,43 @@ pub(crate) fn list(
     let entries = keys
         .into_iter()
         .map(|key| {
-            let digest = lock
-                .get(key)
-                .and_then(|image| image.digest(&declared.system))
-                .map(str::to_owned);
-            let status = match (declared.targets.contains_key(key), &digest) {
-                (false, _) => Status::Stale,
-                (true, Some(_)) => Status::Locked,
-                (true, None) => Status::Missing,
+            let image = lock.get(key);
+            let Some(systems) = declared.systems.get(key) else {
+                let digests = image
+                    .into_iter()
+                    .flat_map(|image| image.digests())
+                    .map(|(system, digest)| (system.to_owned(), digest.to_owned()))
+                    .collect();
+                return Entry {
+                    key: key.to_owned(),
+                    status: Status::Stale,
+                    hosts: Vec::new(),
+                    digests,
+                };
             };
+            let digests: Vec<(String, String)> = systems
+                .iter()
+                .filter_map(|system| {
+                    let digest = image?.digest(system)?;
+                    Some((system.clone(), digest.to_owned()))
+                })
+                .collect();
             Entry {
                 key: key.to_owned(),
-                status,
-                digest,
+                status: if digests.len() == systems.len() {
+                    Status::Locked
+                } else {
+                    Status::Missing
+                },
+                hosts: declared.hosts[key].iter().cloned().collect(),
+                digests,
             }
         })
         .collect();
     Ok(Listing {
         file,
-        system: declared.system,
+        systems: declared.systems_label(),
+        skipped_note: declared.skipped_note(),
         entries,
     })
 }
@@ -206,10 +252,12 @@ mod tests {
             ]
         );
         assert_eq!(
-            listing.entries[1].digest.as_deref(),
-            Some(&*format!("sha256:{HEX}"))
+            listing.entries[1].digests,
+            [("x86_64-linux".to_owned(), format!("sha256:{HEX}"))]
         );
-        assert_eq!(listing.entries[0].digest, None);
+        assert!(listing.entries[0].digests.is_empty());
+        assert_eq!(listing.entries[1].hosts, ["box"]);
+        assert!(listing.entries[2].hosts.is_empty());
     }
 
     #[test]
@@ -225,7 +273,7 @@ mod tests {
 
         let listing = list(&ev, &flake(&dir), None).unwrap();
         assert_eq!(statuses(&listing), [(CADDY, &Status::Missing)]);
-        assert_eq!(listing.entries[0].digest, None);
+        assert!(listing.entries[0].digests.is_empty());
     }
 
     #[test]
@@ -241,14 +289,94 @@ mod tests {
         let message = list(&ev, &flake(&dir), None).unwrap().message();
         let lines: Vec<&str> = message.lines().collect();
         assert!(lines[0].starts_with("pin-oci: images for 'x86_64-linux' in "));
-        assert_eq!(lines[1], format!("  missing  {SOLO}"));
+        let w = CADDY.len();
         assert_eq!(
-            lines[2],
-            format!(
-                "  locked   {CADDY:<width$}  sha256:{HEX}",
-                width = CADDY.len()
-            )
+            lines[1],
+            format!("  STATUS   {:<w$}  HOSTS  DIGEST", "IMAGE")
         );
+        assert_eq!(lines[2], format!("  missing  {SOLO:<w$}  box"));
+        assert_eq!(
+            lines[3],
+            format!("  locked   {CADDY:<w$}  box    x86_64-linux sha256:{HEX}")
+        );
+    }
+
+    fn two_hosts() -> StubEvaluator {
+        let t = r#"{"registry":"r","repository":"p","tag":"t"}"#;
+        StubEvaluator::routed()
+            .route(".#nixosConfigurations", r#"["arm","pc","plain"]"#)
+            .route(
+                ".#nixosConfigurations.\"arm\".config",
+                &format!(r#"{{"system":"aarch64-linux","targets":{{"{CADDY}":{t}}}}}"#),
+            )
+            .route(
+                ".#nixosConfigurations.\"pc\".config",
+                &format!(r#"{{"system":"x86_64-linux","targets":{{"{CADDY}":{t},"{SOLO}":{t}}}}}"#),
+            )
+            .route(".#nixosConfigurations.\"plain\".config", "null")
+    }
+
+    #[test]
+    fn without_a_host_lists_the_union_with_its_hosts_and_every_platform() {
+        let file = temp_dir("list-union").join(LOCKFILE_NAME);
+        std::fs::write(
+            &file,
+            lock_json(&[
+                (CADDY, "x86_64-linux", HEX),
+                (SOLO, "x86_64-linux", OTHER),
+                (OLD, "aarch64-linux", OTHER),
+            ]),
+        )
+        .unwrap();
+
+        let listing = list(&two_hosts(), ".", Some(&file)).unwrap();
+        // caddy is declared on both platforms but locked on x86_64 only.
+        assert_eq!(
+            statuses(&listing),
+            [
+                (SOLO, &Status::Locked),
+                (CADDY, &Status::Missing),
+                (OLD, &Status::Stale),
+            ]
+        );
+        assert_eq!(listing.entries[0].hosts, ["pc"]);
+        assert_eq!(listing.entries[1].hosts, ["arm", "pc"]);
+        assert_eq!(
+            listing.entries[1].digests,
+            [("x86_64-linux".to_owned(), format!("sha256:{HEX}"))]
+        );
+        assert_eq!(
+            listing.entries[2].digests,
+            [("aarch64-linux".to_owned(), format!("sha256:{OTHER}"))]
+        );
+
+        let message = listing.message();
+        assert!(message.contains("images for 'aarch64-linux, x86_64-linux' in "));
+        assert!(message.contains("HOSTS"));
+        assert!(message.contains("arm,pc"));
+        assert!(message.ends_with("\npin-oci: ignored, pin-oci not enabled: plain"));
+    }
+
+    #[test]
+    fn a_stale_image_keeps_one_line_per_locked_platform() {
+        let dir = temp_dir("list-stale-multi");
+        std::fs::write(
+            dir.join(LOCKFILE_NAME),
+            lock_json(&[(OLD, "x86_64-linux", HEX)]).replace(
+                r#""arch":{"#,
+                &format!(
+                    r#""arch":{{"aarch64-linux":{{"digest":"sha256:{OTHER}","os":"linux","architecture":"arm64"}},"#
+                ),
+            ),
+        )
+        .unwrap();
+        let ev = StubEvaluator::ok(&declared_json(&[]));
+
+        let message = list(&ev, &flake(&dir), None).unwrap().message();
+        assert!(message.contains(&format!("aarch64-linux sha256:{OTHER}\n")));
+        assert!(message
+            .trim_end()
+            .ends_with(&format!("x86_64-linux sha256:{HEX}")));
     }
 
     #[test]

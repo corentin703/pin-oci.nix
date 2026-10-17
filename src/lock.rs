@@ -28,7 +28,9 @@ pub(crate) struct Change {
 #[derive(Debug)]
 pub(crate) struct Outcome {
     file: PathBuf,
-    system: String,
+    systems: String,
+    /// Hosts left out because pin-oci is not enabled on them.
+    skipped_note: String,
     total: usize,
     resolved: Vec<String>,
     /// Refreshed images whose digests moved, with the platforms concerned.
@@ -66,10 +68,11 @@ impl Outcome {
     pub(crate) fn message(&self) -> String {
         if !self.written {
             return format!(
-                "pin-oci: {} already up to date for '{}' ({} image(s))",
+                "pin-oci: {} already up to date for '{}' ({} image(s)){}",
                 self.file.display(),
-                self.system,
-                self.total
+                self.systems,
+                self.total,
+                self.skipped_note
             );
         }
         let list = |label: &str, keys: &[String]| -> String {
@@ -98,13 +101,14 @@ impl Outcome {
             n => format!("\n  = {n} image(s) already current"),
         };
         format!(
-            "pin-oci: wrote {} ({} image(s)){}{}{}{}",
+            "pin-oci: wrote {} ({} image(s)){}{}{}{}{}",
             self.file.display(),
             self.total,
             list("+", &self.resolved),
             updated,
             list("-", &self.pruned),
-            current
+            current,
+            self.skipped_note
         )
     }
 }
@@ -179,10 +183,7 @@ pub(crate) fn lock(
     let declared = nix::declared(evaluator, flake).map_err(LockError::Nix)?;
     let mut lockfile = Lockfile::read(&file).map_err(LockError::Lockfile)?;
 
-    let missing = lockfile.missing(
-        declared.targets.keys().map(String::as_str),
-        &declared.system,
-    );
+    let missing = declared.unlocked(&lockfile);
     let selected: BTreeSet<String> = match refresh {
         Refresh::Missing => BTreeSet::new(),
         Refresh::All => declared.targets.keys().cloned().collect(),
@@ -207,10 +208,10 @@ pub(crate) fn lock(
     for key in to_resolve {
         let target = &declared.targets[&key];
         let result = registry::resolve(runtime, target).and_then(|image| {
-            if image.has_system(&declared.system) {
-                Ok(image)
-            } else {
-                Err(RegistryError::MissingHostPlatform(declared.system.clone()))
+            // Every platform a declaring host runs on must be in the index.
+            match declared.systems[&key].iter().find(|s| !image.has_system(s)) {
+                None => Ok(image),
+                Some(system) => Err(RegistryError::MissingHostPlatform(system.clone())),
             }
         });
         match result {
@@ -229,7 +230,7 @@ pub(crate) fn lock(
         if missing.contains(&key) {
             resolved_keys.push(key.clone());
         } else {
-            // Selected for a refresh and already locked for this platform.
+            // Selected for a refresh and already locked for every platform it needs.
             let moved = lockfile
                 .get(&key)
                 .map(|old| changes(old, &image))
@@ -247,7 +248,8 @@ pub(crate) fn lock(
 
     Ok(Outcome {
         file,
-        system: declared.system,
+        systems: declared.systems_label(),
+        skipped_note: declared.skipped_note(),
         total: declared.targets.len(),
         resolved: resolved_keys,
         updated,
@@ -669,5 +671,108 @@ mod tests {
             Err(LockError::NoLockfilePath(_))
         ));
         assert!(rt.calls.borrow().is_empty());
+    }
+
+    fn host_route(ev: StubEvaluator, host: &str, json: &str) -> StubEvaluator {
+        ev.route(&format!(".#nixosConfigurations.\"{host}\".config"), json)
+    }
+
+    fn hosts(a: (&str, &[&str]), b: (&str, &[&str])) -> StubEvaluator {
+        let ev = StubEvaluator::routed().route(".#nixosConfigurations", r#"["a","b","off"]"#);
+        let ev = host_route(ev, "a", &declared(a.0, a.1));
+        let ev = host_route(ev, "b", &declared(b.0, b.1));
+        host_route(ev, "off", "null")
+    }
+
+    #[test]
+    fn without_a_host_one_lockfile_holds_the_union_of_every_host() {
+        let dir = temp_dir("lock-union");
+        let file = dir.join(LOCKFILE_NAME);
+        let ev = hosts(
+            ("x86_64-linux", &[SOLO, CADDY]),
+            ("aarch64-linux", &[CADDY]),
+        );
+
+        let out = lock(&ev, &runtime(), ".", Some(&file), &Refresh::Missing).unwrap();
+        assert!(out.written && out.total == 2);
+        let content = std::fs::read_to_string(&file).unwrap();
+        assert!(content.contains(SOLO) && content.contains(CADDY));
+        assert!(content.contains("aarch64-linux") && content.contains("x86_64-linux"));
+        assert!(
+            !content.contains("\"a\"") && !content.contains("\"b\""),
+            "no host in the lockfile"
+        );
+        assert!(out
+            .message()
+            .ends_with("\npin-oci: ignored, pin-oci not enabled: off"));
+
+        let rt = runtime();
+        let again = lock(&ev, &rt, ".", Some(&file), &Refresh::Missing).unwrap();
+        assert!(!again.written && rt.calls.borrow().is_empty());
+    }
+
+    #[test]
+    fn an_image_only_declared_by_one_host_is_not_pruned() {
+        let dir = temp_dir("lock-union-prune");
+        let file = dir.join(LOCKFILE_NAME);
+        lock(
+            &hosts(("x86_64-linux", &[SOLO]), ("aarch64-linux", &[CADDY])),
+            &runtime(),
+            ".",
+            Some(&file),
+            &Refresh::Missing,
+        )
+        .unwrap();
+
+        let out = lock(
+            &hosts(("x86_64-linux", &[]), ("aarch64-linux", &[CADDY])),
+            &runtime(),
+            ".",
+            Some(&file),
+            &Refresh::Missing,
+        )
+        .unwrap();
+        assert_eq!(out.pruned, vec![SOLO]);
+        assert!(std::fs::read_to_string(&file).unwrap().contains(CADDY));
+    }
+
+    #[test]
+    fn a_platform_one_host_needs_but_the_image_lacks_fails_everything() {
+        let dir = temp_dir("lock-union-arch");
+        let file = dir.join(LOCKFILE_NAME);
+        // solo has no arm64 manifest: the aarch64 host cannot be served, nothing is written.
+        let ev = hosts(("x86_64-linux", &[CADDY, SOLO]), ("aarch64-linux", &[SOLO]));
+        let err = lock(&ev, &runtime(), ".", Some(&file), &Refresh::Missing).unwrap_err();
+        assert!(matches!(err, LockError::Resolution(_)));
+        assert!(!file.exists());
+    }
+
+    #[test]
+    fn an_image_locked_for_one_platform_is_resolved_for_the_other_host() {
+        let dir = temp_dir("lock-union-new-host");
+        let file = dir.join(LOCKFILE_NAME);
+        // A hand-written entry that only covers x86_64.
+        std::fs::write(
+            &file,
+            format!(
+                r#"{{"version":1,"images":{{"{CADDY}":{{"registry":"docker.io","repository":"library/caddy","tag":"2-alpine","arch":{{"x86_64-linux":{{"digest":"sha256:{}","os":"linux","architecture":"amd64"}}}}}}}}}}"#,
+                "a".repeat(64)
+            ),
+        )
+        .unwrap();
+
+        let rt = runtime();
+        let out = lock(
+            &hosts(("x86_64-linux", &[CADDY]), ("aarch64-linux", &[CADDY])),
+            &rt,
+            ".",
+            Some(&file),
+            &Refresh::Missing,
+        )
+        .unwrap();
+        assert_eq!(out.resolved, vec![CADDY]);
+        assert!(std::fs::read_to_string(&file)
+            .unwrap()
+            .contains("aarch64-linux"));
     }
 }

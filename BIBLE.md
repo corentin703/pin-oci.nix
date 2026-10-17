@@ -327,7 +327,7 @@ The CLI never parses image references and holds no registry client or credential
 #### Commands:
 
 * `pin-oci lock [--flake <ref>] [--file <path>] [--update [<image>...]]`, and its mode `--check` below:
-1. Evaluates the configuration without building, retrieving the host system and the targets in a single evaluation:
+1. Evaluates the configuration without building, retrieving the host system and the targets in a single evaluation (per host; see the end of this section for `--flake` without `<host>`):
 ```bash
 nix eval --json <flake>#nixosConfigurations."<host>".config \
   --apply 'c: { system = c.virtualisation.pin-oci.system; targets = c.virtualisation.pin-oci.lockTargets; }'
@@ -353,16 +353,21 @@ nix eval --json <flake>#nixosConfigurations."<host>".config \
 
 
 * `pin-oci lock --check [--flake <ref>] [--file <path>]` (there is no separate `check` subcommand):
-Checks that every key of `lockTargets` has an entry for the host platform in the lockfile, without modifying any file. It evaluates the same `{ system; targets }` as `lock` (only the target keys are used), never the lockfile. Lockfile entries absent from `lockTargets` are ignored (only `lock` prunes them); a missing lockfile counts as empty.
+Checks that every key of `lockTargets` has an entry for the platform of every host declaring it in the lockfile, without modifying any file. It evaluates the same `{ system; targets }` as `lock` (only the target keys are used), never the lockfile. Lockfile entries absent from `lockTargets` are ignored (only `lock` prunes them); a missing lockfile counts as empty.
 Exit codes: 0 = in sync, 1 = out of sync, 2 = error (nix failure, unreadable or invalid lockfile, remote flake without `--file`). Suited for CI steps.
 
 * `pin-oci lock --list [--flake <ref>] [--file <path>]`:
-Lists every key that is declared (`lockTargets`) or locked, sorted, with its status for the host system: `locked` (declared, has a digest for the host system, which is shown in full), `missing` (declared, no entry for the host system, even if other systems are locked) or `stale` (locked, no longer declared). It evaluates the same `{ system; targets }` as `check`, reads the lockfile (absent = empty) and writes nothing; it takes no `Runtime`, so it cannot contact a registry. Exit codes: 0 on success whatever the statuses (use `--check` to gate CI), 2 on error. `--list` excludes `--check` and `--update`.
+Lists every key that is declared (`lockTargets`) or locked, sorted, as a table `STATUS IMAGE HOSTS DIGEST`. `HOSTS` is the comma-separated list of hosts declaring the image (`-` for a stale one). Status is relative to the platforms of those hosts: `locked` (declared, has a digest for each of them), `missing` (declared, no entry for at least one, even if other systems are locked) or `stale` (locked, no longer declared). `DIGEST` shows, in full, one `<system> <digest>` per line for each of those platforms the lockfile has (every locked platform for a stale image). It evaluates the same `{ system; targets }` as `check`, reads the lockfile (absent = empty) and writes nothing; it takes no `Runtime`, so it cannot contact a registry. Exit codes: 0 on success whatever the statuses (use `--check` to gate CI), 2 on error. `--list` excludes `--check` and `--update`.
 
 * `pin-oci completions <shell>`:
 Prints the completion script for `bash`, `zsh`, `fish`, `elvish` or `powershell` on stdout (`clap_complete`, generated from the `clap` definition so it cannot drift from the CLI). It touches no file and needs neither `nix` nor `skopeo`; an unknown or missing shell is a usage error (exit 2). The Nix package installs the bash, zsh and fish scripts (`installShellCompletion`, produced by the built binary itself), so they are in place as soon as `pin-oci` is in `environment.systemPackages`.
 
-`--flake` takes `<flake>#<host>` and targets `nixosConfigurations."<host>".config`; a reference without `#<host>` is an error.
+`--flake` defaults to `.`. With `<flake>#<host>` it targets `nixosConfigurations."<host>".config` alone. Without `#<host>` (including the default), the CLI aggregates every host of the flake:
+1. lists them with `nix eval --json <flake>#nixosConfigurations --apply builtins.attrNames`;
+2. evaluates each one with the same contract, which yields `null` for a host that does not use pin-oci (module absent or `enable = false`). Such hosts are ignored and named in the output (`ignored, pin-oci not enabled: <hosts>`), never an error;
+3. merges the hosts into the **union** of their targets, written to a single lockfile. The lockfile records platforms, never hosts. An image is missing when it has no entry for the platform of any host declaring it, `lock` fails if its index lacks the platform of one of those hosts, and pruning only drops keys declared by no host.
+
+All or nothing: if any host fails to evaluate, every failure is reported, nothing is resolved or written and the exit code is 2. It is also an error (exit 2) when the flake has no `nixosConfigurations` or no host enables pin-oci.
 
 ---
 

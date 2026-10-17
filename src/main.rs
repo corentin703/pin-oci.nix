@@ -27,7 +27,7 @@ struct Cli {
 enum Command {
     /// Resolve declared images to per-platform digests and write pin-oci.lock
     Lock {
-        /// Flake reference to evaluate, as <flake>#<host>
+        /// Flake reference: <flake>#<host>, or <flake> for every host that enables pin-oci
         #[arg(long, default_value = ".")]
         flake: String,
         /// Lockfile to read or write (default: <flake root>/pin-oci.lock)

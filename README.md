@@ -170,8 +170,11 @@ $ git add pin-oci.lock
 > **`git add` is mandatory.** In a flake, Nix does not see files that git does not track.
 > An untracked lockfile looks missing and the assertion below fires.
 
-`--flake` takes `<flake>#<host>`, the name under `nixosConfigurations`. A reference without
-`#<host>` is an error.
+`--flake` defaults to `.`. With `<flake>#<host>` (a name under `nixosConfigurations`) only that
+host is evaluated. Without `#<host>`, every host of the flake that enables pin-oci is evaluated and
+`pin-oci.lock` holds the union of their images (the lockfile knows platforms, not hosts). Hosts
+without pin-oci are ignored and named in the output. If any host fails to evaluate, nothing is
+written (exit 2); it is also an error when no host enables pin-oci.
 
 Behaviour worth knowing:
 
@@ -241,19 +244,22 @@ a plain `lock` prunes them.
 ### 5. List
 
 ```console
-$ pin-oci lock --list --flake .#myhost
-pin-oci: images for 'x86_64-linux' in ./pin-oci.lock
-  missing  docker.io/acme/solo:1
-  locked   docker.io/library/caddy:2-alpine  sha256:173b26306d711395accaeba8b67afcaad2a085ccb1e6bf26010bfe8c095a5229
-  stale    docker.io/old/thing:3             sha256:0000000000000000000000000000000000000000000000000000000000000000
+$ pin-oci lock --list
+pin-oci: images for 'aarch64-linux, x86_64-linux' in ./pin-oci.lock
+  STATUS   IMAGE                             HOSTS    DIGEST
+  missing  docker.io/acme/solo:1             pc
+  locked   docker.io/library/caddy:2-alpine  arm,pc   aarch64-linux sha256:7c1e…
+                                                      x86_64-linux sha256:173b26306d711395accaeba8b67afcaad2a085ccb1e6bf26010bfe8c095a5229
+  stale    docker.io/old/thing:3             -        x86_64-linux sha256:0000000000000000000000000000000000000000000000000000000000000000
 ```
 
-Every image that is declared or locked, sorted, with its status for the **host platform**:
+Every image that is declared or locked, sorted, with the hosts declaring it and its status for the
+**platforms of those hosts**:
 
 | Status | Meaning |
 | --- | --- |
-| `locked` | declared, and the lockfile has a digest for your platform (shown in full) |
-| `missing` | declared, but nothing is locked for your platform: run `pin-oci lock` |
+| `locked` | declared, and the lockfile has a digest for each of those platforms (shown in full) |
+| `missing` | declared, but nothing is locked for at least one of them: run `pin-oci lock` |
 | `stale` | in the lockfile but no longer declared: the next plain `lock` removes it |
 
 `--list` only reads: it never writes the lockfile and never contacts a registry. It exits 0
@@ -494,7 +500,7 @@ that file are not usable.
 | --- | --- |
 | Assertion `[pin-oci] Missing or unpinned images` right after `pin-oci lock` | The lockfile is not tracked by git: `git add pin-oci.lock`. |
 | `The option … 'virtualisation.pin-oci.lockFile' was accessed but has no value defined` | Set `lockFile` (see [Declare containers](#2-declare-containers)). |
-| `no host in flake reference` | Use `--flake .#<host>`. |
+| `no nixosConfigurations host of '…' uses pin-oci` | The flake has no host with `virtualisation.pin-oci.enable = true`; or target one with `--flake .#<host>`. |
 | `'github:…' is not a local flake: pass --file <path>` | Remote flake references need an explicit `--file`. |
 | `cannot run skopeo` / `cannot run nix` | The binary is not in `PATH` (not needed with the packaged `pin-oci`, which wraps `skopeo`). |
 | `skopeo failed … manifest unknown` | The tag does not exist in the registry. |

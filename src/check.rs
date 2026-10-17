@@ -9,7 +9,8 @@ const LOCKFILE_NAME: &str = "pin-oci.lock";
 #[derive(Debug)]
 pub(crate) struct Report {
     file: PathBuf,
-    system: String,
+    systems: String,
+    skipped_note: String,
     declared: usize,
     missing: Vec<String>,
 }
@@ -22,17 +23,19 @@ impl Report {
     pub(crate) fn message(&self) -> String {
         if self.is_in_sync() {
             return format!(
-                "pin-oci: {} image(s) pinned for '{}' in {}",
+                "pin-oci: {} image(s) pinned for '{}' in {}{}",
                 self.declared,
-                self.system,
-                self.file.display()
+                self.systems,
+                self.file.display(),
+                self.skipped_note
             );
         }
         let list: String = self.missing.iter().map(|k| format!("\n  - {k}")).collect();
         format!(
-            "pin-oci: lockfile out of sync for '{}' ({}):{list}\n\nRun: pin-oci lock",
-            self.system,
-            self.file.display()
+            "pin-oci: lockfile out of sync for '{}' ({}):{list}\n\nRun: pin-oci lock{}",
+            self.systems,
+            self.file.display(),
+            self.skipped_note
         )
     }
 }
@@ -71,13 +74,11 @@ pub(crate) fn check(
     };
     let declared = nix::declared(evaluator, flake).map_err(CheckError::Nix)?;
     let lock = Lockfile::read(&file).map_err(CheckError::Lockfile)?;
-    let missing = lock.missing(
-        declared.targets.keys().map(String::as_str),
-        &declared.system,
-    );
+    let missing = declared.unlocked(&lock);
     Ok(Report {
         file,
-        system: declared.system,
+        systems: declared.systems_label(),
+        skipped_note: declared.skipped_note(),
         declared: declared.targets.len(),
         missing,
     })
@@ -188,5 +189,41 @@ mod tests {
             check(&stub, &flake, None),
             Err(CheckError::Lockfile(_))
         ));
+    }
+
+    fn two_hosts() -> StubEvaluator {
+        let t = r#"{"registry":"r","repository":"p","tag":"t"}"#;
+        StubEvaluator::routed()
+            .route(".#nixosConfigurations", r#"["arm","pc","off"]"#)
+            .route(
+                ".#nixosConfigurations.\"arm\".config",
+                &format!(r#"{{"system":"aarch64-linux","targets":{{"{KEY}":{t}}}}}"#),
+            )
+            .route(
+                ".#nixosConfigurations.\"pc\".config",
+                &format!(r#"{{"system":"x86_64-linux","targets":{{"{KEY}":{t}}}}}"#),
+            )
+            .route(".#nixosConfigurations.\"off\".config", "null")
+    }
+
+    #[test]
+    fn without_a_host_every_platform_of_the_union_must_be_locked() {
+        let dir = temp_dir("check-union");
+        let file = dir.join(LOCKFILE_NAME);
+
+        std::fs::write(&file, lock_json("x86_64-linux")).unwrap();
+        let report = check(&two_hosts(), ".", Some(&file)).unwrap();
+        assert_eq!(report.missing, vec![KEY], "the aarch64 host is not covered");
+        assert!(!report.is_in_sync());
+        assert!(report.message().contains("'aarch64-linux, x86_64-linux'"));
+        assert!(report
+            .message()
+            .ends_with("ignored, pin-oci not enabled: off"));
+
+        std::fs::write(&file, lock_json("x86_64-linux").replace(r#""arch":{"#, &format!(
+            r#""arch":{{"aarch64-linux":{{"digest":"sha256:{}","os":"linux","architecture":"arm64"}},"#,
+            "b".repeat(64)
+        ))).unwrap();
+        assert!(check(&two_hosts(), ".", Some(&file)).unwrap().is_in_sync());
     }
 }

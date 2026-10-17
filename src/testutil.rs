@@ -17,6 +17,8 @@ pub(crate) struct StubEvaluator {
     response: Result<String, String>,
     /// `(installable, apply)` of every call.
     pub(crate) calls: RefCell<Vec<(String, String)>>,
+    /// When not empty, the response is looked up by exact installable instead.
+    routes: Vec<(String, Result<String, String>)>,
 }
 
 impl StubEvaluator {
@@ -24,13 +26,36 @@ impl StubEvaluator {
         Self {
             response: Ok(json.to_owned()),
             calls: RefCell::default(),
+            routes: Vec::new(),
         }
+    }
+
+    /// An evaluator answering per installable; an unlisted one is a test bug.
+    pub(crate) fn routed() -> Self {
+        Self {
+            response: Err("no route".to_owned()),
+            calls: RefCell::default(),
+            routes: Vec::new(),
+        }
+    }
+
+    pub(crate) fn route(mut self, installable: &str, json: &str) -> Self {
+        self.routes
+            .push((installable.to_owned(), Ok(json.to_owned())));
+        self
+    }
+
+    pub(crate) fn route_failing(mut self, installable: &str, stderr: &str) -> Self {
+        self.routes
+            .push((installable.to_owned(), Err(stderr.to_owned())));
+        self
     }
 
     pub(crate) fn failing(stderr: &str) -> Self {
         Self {
             response: Err(stderr.to_owned()),
             calls: RefCell::default(),
+            routes: Vec::new(),
         }
     }
 }
@@ -40,7 +65,15 @@ impl Evaluator for StubEvaluator {
         self.calls
             .borrow_mut()
             .push((installable.to_owned(), apply.to_owned()));
-        match &self.response {
+        let response = if self.routes.is_empty() {
+            &self.response
+        } else {
+            match self.routes.iter().find(|(i, _)| i == installable) {
+                Some((_, response)) => response,
+                None => panic!("unexpected nix eval: {installable}"),
+            }
+        };
+        match response {
             Ok(json) => Ok(json.clone()),
             Err(stderr) => Err(NixError::Failed {
                 code: Some(1),

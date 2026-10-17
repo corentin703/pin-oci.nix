@@ -338,3 +338,94 @@ fn a_failing_update_leaves_the_lockfile_byte_identical() {
     assert_eq!(out.status.code(), Some(2));
     assert_eq!(fs::read(fx.lockfile()).unwrap(), before);
 }
+
+impl Fixture {
+    /// Fake nix for a flake with hosts `pc` (x86_64) and `arm` (aarch64), both declaring caddy,
+    /// and `plain`, which does not use pin-oci. `fail` makes `arm` fail to evaluate.
+    fn nix_hosts(&self, fail: bool) {
+        let arm = if fail {
+            "echo 'error: boom on arm' >&2; exit 1".to_owned()
+        } else {
+            format!(r#"printf '%s' '{{"system":"aarch64-linux","targets":{{{CADDY}}}}}'"#)
+        };
+        self.executable(
+            "nix",
+            &format!(
+                r#"case "$3" in
+  *'#nixosConfigurations') printf '%s' '["arm","pc","plain"]' ;;
+  *'"pc".config') printf '%s' '{{"system":"x86_64-linux","targets":{{{CADDY}}}}}' ;;
+  *'"arm".config') {arm} ;;
+  *'"plain".config') printf null ;;
+  *) echo "unexpected: $*" >&2; exit 1 ;;
+esac"#
+            ),
+        );
+    }
+
+    /// Runs in the flake directory with no `--flake`.
+    fn bare(&self, args: &[&str]) -> Output {
+        Command::new(env!("CARGO_BIN_EXE_pin-oci"))
+            .arg("lock")
+            .args(args)
+            .current_dir(self.dir.join("flake"))
+            .env("PATH", self.dir.join("bin"))
+            .output()
+            .unwrap()
+    }
+}
+
+#[test]
+fn without_flake_every_host_of_the_flake_goes_into_one_lockfile() {
+    let fx = Fixture::new("all-hosts");
+    fx.nix_hosts(false);
+    fx.skopeo();
+
+    assert_eq!(fx.bare(&["--check"]).status.code(), Some(1));
+
+    let out = fx.bare(&[]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert!(stdout(&out).contains("ignored, pin-oci not enabled: plain"));
+    let lock = fs::read_to_string(fx.lockfile()).unwrap();
+    assert!(lock.contains("aarch64-linux") && lock.contains("x86_64-linux"));
+    assert!(
+        !lock.contains("\"pc\"") && !lock.contains("plain"),
+        "no host in the lockfile"
+    );
+
+    assert_eq!(fx.bare(&["--check"]).status.code(), Some(0));
+    let list = stdout(&fx.bare(&["--list"]));
+    assert!(list.contains("HOSTS") && list.contains("arm,pc"), "{list}");
+    assert!(list.contains("aarch64-linux sha256:") && list.contains("x86_64-linux sha256:"));
+}
+
+#[test]
+fn without_flake_one_failing_host_exits_2_and_writes_nothing() {
+    let fx = Fixture::new("all-hosts-fail");
+    fx.nix_hosts(true);
+    fx.skopeo();
+
+    let out = fx.bare(&[]);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(stderr(&out).contains("arm: ") && stderr(&out).contains("boom on arm"));
+    assert!(!fx.lockfile().exists());
+    assert_eq!(
+        fx.skopeo_calls(),
+        0,
+        "nothing is resolved before every host evaluated"
+    );
+}
+
+#[test]
+fn without_flake_and_without_any_pin_oci_host_exits_2() {
+    let fx = Fixture::new("no-host");
+    fx.executable(
+        "nix",
+        r#"case "$3" in
+  *'#nixosConfigurations') printf '%s' '["plain"]' ;;
+  *) printf null ;;
+esac"#,
+    );
+    let out = fx.bare(&[]);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(stderr(&out).contains("uses pin-oci"), "{}", stderr(&out));
+}
