@@ -221,6 +221,9 @@ Behaviour worth knowing:
   Add `--dry` to see what would move without writing the lockfile
   (`pin-oci lock update --dry --flake .#myhost`); images pulled into the store are not hashed in
   that mode, so nothing is downloaded.
+- **Images pulled into the store are downloaded once.** For an image some container pulls
+  (`pullImage`), `lock` and `lock update` also record its `nixHash`, which means fetching the image;
+  a digest that did not move keeps its hash, so a second run downloads nothing.
 - **Stale entries are removed:** images no longer declared disappear from the lockfile.
 - **All or nothing.** If any image fails to resolve, every failure is listed, the lockfile
   is left untouched and the exit code is 2.
@@ -254,7 +257,8 @@ pin-oci: 1 image(s) pinned for 'x86_64-linux' in ./pin-oci.lock
 ```
 
 `lock check` never modifies anything and never contacts a registry. It verifies that every
-declared image has an entry for the host platform.
+declared image has an entry for the host platform and, for images pulled into the store
+(`pullImage`), a `nixHash` for it.
 
 | Exit code | Meaning |
 | --- | --- |
@@ -284,6 +288,7 @@ Every image that is declared or locked, sorted, with the hosts declaring it and 
 | --- | --- |
 | `locked` | declared, and the lockfile has a digest for each of those platforms (shown in full) |
 | `missing` | declared, but nothing is locked for at least one of them: run `pin-oci lock` |
+| `no-hash` | locked, but pulled into the store (`pullImage`) and without the `nixHash` of one of those platforms: run `pin-oci lock` |
 | `stale` | in the lockfile but no longer declared: the next plain `lock` removes it |
 
 `lock list` only reads: it never writes the lockfile and never contacts a registry. It exits 0
@@ -303,6 +308,10 @@ Synchronize the lock file with the command:
 then make it visible to the flake:
   git add pin-oci.lock
 ```
+
+With `pullImage`, an image locked without its `nixHash` stops evaluation the same way, listing
+the images and giving the same command. `pullImage` on a reference that already carries a digest is
+refused with a message naming the containers.
 
 `pin-oci lock` and `lock check` evaluate only the list of images and the host platform, never
 the lockfile, so they work on a configuration that does not build yet.
@@ -586,7 +595,7 @@ registry).
 | --- | --- | --- |
 | Rust unit | `src/*.rs` (`#[cfg(test)]`) | lockfile model, platform mapping, manifest resolution, `check` / `lock` logic, with `nix` and `skopeo` behind traits and stubbed. |
 | Rust end-to-end | `tests/check_cli.rs`, `tests/lock_cli.rs` | The real binary against a fake `nix` and a fake `skopeo` placed in `PATH`. `tests/fixtures/` holds real `skopeo` outputs captured once. |
-| Nix modules | `tests/nix/default.nix`, `infra.nix`, `projects.nix`, `resources.nix` (run by `nix flake check`) | Reference normalization, module evaluation against fixture lockfiles (present / missing / wrong architecture / corrupt), the generated systemd units, laziness of `lockTargets`, container ordering, and the exact expression the CLI evaluates (`src/apply.nix`, shared with Rust). |
+| Nix modules | `tests/nix/default.nix`, `infra.nix`, `projects.nix`, `resources.nix`, `pull-image.nix` (run by `nix flake check`) | Reference normalization, module evaluation against fixture lockfiles (present / missing / wrong architecture / corrupt), the generated systemd units, laziness of `lockTargets`, container ordering, and the exact expression the CLI evaluates (`src/apply.nix`, shared with Rust). |
 | Overlay | `tests/nix/overlay.nix` | `overlays.default` provides `pkgs.pin-oci` (same derivation as the package), adds nothing else, and `environment.systemPackages = [ pkgs.pin-oci ]` resolves; without the overlay `pkgs` has no `pin-oci`. |
 | Convert | `src/convert.rs`, `src/render.rs`, `tests/convert_cli.rs`, `tests/nix/convert.nix`, `tests/fixtures/compose/` | Every mapped key and every warning, the errors (interpolation, rewritten numbers, no image, bad names), YAML 1.2 booleans and merge keys, Nix escaping of hostile values; the binary against reference files (compose in, Nix out, byte for byte); and those same reference modules evaluated by the real module, offline. |
 | Completions | `tests/completions_cli.rs`, `tests/nix/completions.nix` | `pin-oci completions <shell>` for every shell (no `nix`, no `skopeo`, usage errors), and the package ships the bash, zsh and fish scripts, equal to what the packaged binary prints. |
@@ -628,11 +637,12 @@ pin-oci.nix/
 │   ├── list.rs         # `lock list`: declared and locked images with their status
 │   ├── convert.rs      # `convert`: compose subset to a project, warnings and errors
 │   ├── render.rs       # `convert`: project to Nix text, string escaping
-│   ├── lock.rs         # `lock`: resolve missing, prune, write
+│   ├── lock.rs         # `lock`, `lock update`: resolve, refresh, hash images to pull, prune, write
 │   ├── nix.rs          # nix eval boundary, <flake>#<host> handling
-│   ├── registry.rs     # skopeo boundary, index / single-manifest resolution
+│   ├── registry.rs     # skopeo boundary, index / single-manifest resolution, archive hash
 │   ├── lockfile.rs     # lockfile model, platform mapping, deterministic write
-│   └── apply.nix       # expression the CLI evaluates on the configuration
+│   ├── apply.nix       # expression the CLI evaluates on the configuration
+│   └── apply-optional.nix  # same, null for a host that does not use pin-oci
 ├── modules/
 │   ├── default.nix     # module entry point
 │   ├── containers.nix  # milestone 1: options, assertion, lowering
