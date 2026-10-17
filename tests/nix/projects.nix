@@ -98,6 +98,64 @@ in
         podman-prometheus = false;
       };
     };
+    # ---- project target ----
+    testProjectTargetGroupsTheServices = {
+      expr = {
+        wants = lib.sort lib.lessThan mon.systemd.targets.podman-monitoring.wants;
+        boot = mon.systemd.targets.podman-monitoring.wantedBy;
+      };
+      expected = {
+        wants = [
+          "podman-monitoring-grafana.service"
+          "podman-monitoring-prometheus.service"
+        ];
+        boot = [ "multi-user.target" ];
+      };
+    };
+    testServicesArePartOfTheProjectTarget = {
+      expr = map (n: mon.systemd.services.${n}.partOf) [
+        "podman-monitoring-grafana"
+        "podman-monitoring-prometheus"
+      ];
+      expected = [
+        [ "podman-monitoring.target" ]
+        [ "podman-monitoring.target" ]
+      ];
+    };
+    testTargetFollowsAnExplicitServiceName = {
+      expr =
+        let
+          c = evalProject {
+            services.web = {
+              image = "caddy:2-alpine";
+              serviceName = "custom-web";
+            };
+          };
+        in
+        {
+          wants = c.systemd.targets.podman-p.wants;
+          partOf = c.systemd.services.custom-web.partOf;
+        };
+      expected = {
+        wants = [ "custom-web.service" ];
+        partOf = [ "podman-p.target" ];
+      };
+    };
+    testDisabledProjectHasNoTarget = {
+      expr =
+        (eval [
+          base
+          { virtualisation.pin-oci.projects.p.services.web.image = "caddy:2-alpine"; }
+        ]).systemd.targets
+          ? podman-p;
+      expected = false;
+    };
+    testNoTargetWithoutProject = {
+      expr = lib.filter (n: lib.hasPrefix "podman-" n) (
+        builtins.attrNames (eval [ base ]).systemd.targets
+      );
+      expected = [ ];
+    };
     testExplicitServiceNameIsKept = {
       expr =
         (evalProject {

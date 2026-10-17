@@ -155,6 +155,34 @@ let
     )
   ) projects;
 
+  # Unit of a service: an explicit `serviceName` wins over the `<backend>-<container>` default.
+  unitName =
+    project: service: svc:
+    if svc.serviceName == "${backend}-${service}" then
+      "${backend}-${prefixed project service}"
+    else
+      svc.serviceName;
+
+  # One `<backend>-<project>.target` per project: start/stop/restart it to act on every service.
+  projectTargets = lib.mapAttrs' (
+    project: pc:
+    lib.nameValuePair "${backend}-${project}" {
+      description = "pin-oci project ${project}";
+      wantedBy = [ "multi-user.target" ];
+      wants = lib.mapAttrsToList (s: svc: "${unitName project s svc}.service") pc.services;
+    }
+  ) projects;
+
+  serviceUnits = lib.concatMapAttrs (
+    project: pc:
+    lib.mapAttrs' (
+      s: svc:
+      lib.nameValuePair (unitName project s svc) {
+        partOf = [ "${backend}-${project}.target" ];
+      }
+    ) pc.services
+  ) projects;
+
   # ---- assertions ----
   flat = f: lib.concatLists (lib.mapAttrsToList f projects);
 
@@ -251,5 +279,8 @@ in
       networks = networks;
       volumes = volumes;
     };
+
+    systemd.targets = projectTargets;
+    systemd.services = serviceUnits;
   };
 }

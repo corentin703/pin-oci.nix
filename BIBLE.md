@@ -487,7 +487,10 @@ requires = [ "${backend}-${project}-${depService}.service" ];
 A `dependsOn` naming a service absent from the project is an assertion failure.
 
 
-4. **Feeding the CLI:**
+4. **Project target:**
+Each enabled project generates `<backend>-<project>.target` (e.g. `podman-monitoring.target`), `wantedBy` `multi-user.target` and `wants` every service unit of the project. Each service unit is `partOf` the target, so `start`, `stop` and `restart` on the target apply to all services. The target runs nothing itself. The service unit is the container's `serviceName` (an explicit one is kept). Network and volume init units are not part of the target: services already `require` them. No target is generated for a disabled project.
+
+5. **Feeding the CLI:**
 Project services are lowered into `virtualisation.pin-oci.containers`, so `virtualisation.pin-oci.lockTargets` covers them with no extra code; `pin-oci lock` consumes that single option.
 
 ---

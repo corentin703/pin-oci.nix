@@ -328,6 +328,19 @@ A service accepts the options of a container. What the project does for you:
 | `networks = [ "backend" ]`, `extraOptions = [ "--network=backend" ]` | rewritten to `monitoring-backend` (a suffix like `:alias=db` is kept) |
 | `dependsOn = [ "prometheus" ]` | `After` and `Requires` on `monitoring-prometheus` |
 | `networks.default.enable = true` | every service joins `monitoring-default` |
+| project `monitoring` | target `<backend>-monitoring.target`, grouping all its services |
+
+**Project target.** `<backend>-<project>.target` (e.g. `podman-monitoring.target`) is started at
+boot and `wants` every service unit of the project, which are `partOf` it. It runs nothing
+itself; it lets you act on the whole project:
+
+```console
+$ systemctl restart podman-monitoring.target   # restarts every service of the project
+$ systemctl stop podman-monitoring.target
+```
+
+Network and volume init units are not part of the target (they are `oneshot` units with
+`RemainAfterExit`, required by the services that use them). A disabled project has no target.
 
 **Names inside the project.** Containers are named `<project>-<service>`, so on its own
 `prometheus` would not resolve. Each service therefore joins the default network with the
