@@ -1,9 +1,10 @@
 //! End-to-end: `pin-oci lock check` and `lock list` (the real binary) against a fake `nix` on PATH. Offline.
 
 use std::fs;
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
+
+mod common;
 
 const KEY: &str = "docker.io/library/caddy:2-alpine";
 const HEX: &str = "d8a26e8499d8a26e8499d8a26e8499d8a26e8499d8a26e8499d8a26e8499abcd";
@@ -27,8 +28,7 @@ impl Fixture {
 
     fn fake_nix(&self, body: &str) {
         let path = self.dir.join("bin/nix");
-        fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
-        fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+        common::write_executable(&path, &format!("#!/bin/sh\n{body}\n"));
     }
 
     /// Fake `nix` that records its arguments and prints `json`.
@@ -48,12 +48,12 @@ impl Fixture {
     }
 
     fn run(&self, args: &[&str]) -> Output {
-        Command::new(env!("CARGO_BIN_EXE_pin-oci"))
-            .args(["lock", "check"])
-            .args(args)
-            .env("PATH", self.dir.join("bin"))
-            .output()
-            .unwrap()
+        common::output(
+            Command::new(env!("CARGO_BIN_EXE_pin-oci"))
+                .args(["lock", "check"])
+                .args(args)
+                .env("PATH", self.dir.join("bin")),
+        )
     }
 
     fn run_host(&self) -> Output {
@@ -183,11 +183,11 @@ fn the_old_check_subcommand_is_rejected() {
     let fx = Fixture::new("old-check");
     fx.nix_printing(&declared(&[KEY]));
 
-    let out = Command::new(env!("CARGO_BIN_EXE_pin-oci"))
-        .args(["check", "--flake", &format!("{}#box", fx.flake().display())])
-        .env("PATH", fx.dir.join("bin"))
-        .output()
-        .unwrap();
+    let out = common::output(
+        Command::new(env!("CARGO_BIN_EXE_pin-oci"))
+            .args(["check", "--flake", &format!("{}#box", fx.flake().display())])
+            .env("PATH", fx.dir.join("bin")),
+    );
     assert_eq!(out.status.code(), Some(2));
     assert!(
         stderr(&out).contains("unrecognized subcommand"),
@@ -205,16 +205,16 @@ fn list_shows_locked_missing_and_stale_images_and_exits_0() {
     fx.lockfile("x86_64-linux");
     let before = fs::read(fx.flake().join("pin-oci.lock")).unwrap();
 
-    let out = Command::new(env!("CARGO_BIN_EXE_pin-oci"))
-        .args([
-            "lock",
-            "list",
-            "--flake",
-            &format!("{}#box", fx.flake().display()),
-        ])
-        .env("PATH", fx.dir.join("bin"))
-        .output()
-        .unwrap();
+    let out = common::output(
+        Command::new(env!("CARGO_BIN_EXE_pin-oci"))
+            .args([
+                "lock",
+                "list",
+                "--flake",
+                &format!("{}#box", fx.flake().display()),
+            ])
+            .env("PATH", fx.dir.join("bin")),
+    );
     assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
     let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
     assert!(stdout.contains(&format!("missing  {OTHER}")), "{stdout}");
@@ -232,16 +232,46 @@ fn the_old_mode_flags_are_usage_errors_and_run_nothing() {
     let fx = Fixture::new("old-flags");
     fx.nix_printing(&declared(&[KEY]));
     for flag in ["--check", "--list", "--update"] {
-        let out = Command::new(env!("CARGO_BIN_EXE_pin-oci"))
-            .args(["lock", flag])
-            .env("PATH", fx.dir.join("bin"))
-            .output()
-            .unwrap();
+        let out = common::output(
+            Command::new(env!("CARGO_BIN_EXE_pin-oci"))
+                .args(["lock", flag])
+                .env("PATH", fx.dir.join("bin")),
+        );
         assert_eq!(out.status.code(), Some(2), "{flag}");
         assert!(
             stderr(&out).contains("unexpected argument"),
             "{}",
             stderr(&out)
         );
+    }
+}
+
+/// Regression: writing a fake executable while another thread spawns used to fail the exec
+/// with ETXTBSY, making unrelated tests flaky (exit 2 instead of the expected code).
+#[test]
+fn concurrent_fake_executables_never_hit_text_file_busy() {
+    let root = std::env::temp_dir().join(format!("pin-oci-e2e-{}-etxtbsy", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root).unwrap();
+
+    let workers: Vec<_> = (0..8)
+        .map(|n| {
+            let script = root.join(format!("fake-{n}"));
+            std::thread::spawn(move || {
+                for _ in 0..40 {
+                    common::write_executable(&script, "#!/bin/sh\nexit 0\n");
+                    let mut cmd = Command::new(&script);
+                    let spawned = common::try_output(&mut cmd);
+                    if let Err(e) = spawned {
+                        return Err(e.to_string());
+                    }
+                }
+                Ok(())
+            })
+        })
+        .collect();
+
+    for worker in workers {
+        worker.join().unwrap().unwrap();
     }
 }
