@@ -196,7 +196,7 @@ $ git add pin-oci.lock
 host is evaluated. Without `#<host>`, every host of the flake that enables pin-oci is evaluated and
 `pin-oci.lock` holds the union of their images (the lockfile knows platforms, not hosts). Hosts
 without pin-oci are ignored and named in the output. If any host fails to evaluate, nothing is
-written (exit 2); it is also an error when no host enables pin-oci.
+written (exit 2). When no host enables pin-oci, `lock` writes an empty lockfile (existing entries are pruned) and warns.
 
 Behaviour worth knowing:
 
@@ -532,7 +532,6 @@ that file are not usable.
 | --- | --- |
 | Assertion `[pin-oci] Missing or unpinned images` right after `pin-oci lock` | The lockfile is not tracked by git: `git add pin-oci.lock`. |
 | `The option … 'virtualisation.pin-oci.lockFile' was accessed but has no value defined` | Set `lockFile` (see [Declare containers](#2-declare-containers)). |
-| `no nixosConfigurations host of '…' uses pin-oci` | The flake has no host with `virtualisation.pin-oci.enable = true`; or target one with `--flake .#<host>`. |
 | `'github:…' is not a local flake: pass --file <path>` | Remote flake references need an explicit `--file`. |
 | `cannot run skopeo` / `cannot run nix` | The binary is not in `PATH` (not needed with the packaged `pin-oci`, which wraps `skopeo`). |
 | `skopeo failed … manifest unknown` | The tag does not exist in the registry. |

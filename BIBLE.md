@@ -207,7 +207,7 @@ Prints the completion script for `bash`, `zsh`, `fish`, `elvish` or `powershell`
 2. evaluates each one with the same contract, which yields `null` for a host that does not use pin-oci (module absent or `enable = false`). Such hosts are ignored and named in the output (`ignored, pin-oci not enabled: <hosts>`), never an error;
 3. merges the hosts into the **union** of their targets, written to a single lockfile. The lockfile records platforms, never hosts. An image is missing when it has no entry for the platform of any host declaring it, `lock` fails if its index lacks the platform of one of those hosts, and pruning only drops keys declared by no host.
 
-All or nothing: if any host fails to evaluate, every failure is reported, nothing is resolved or written and the exit code is 2. It is also an error (exit 2) when the flake has no `nixosConfigurations` or no host enables pin-oci.
+All or nothing: if any host fails to evaluate, every failure is reported, nothing is resolved or written and the exit code is 2. When the flake has no `nixosConfigurations` or no host enables pin-oci, nothing is declared: `lock` writes an empty lockfile (`{"version": 1, "images": {}}`, pruning any existing entry, as `nix flake lock` does) and the output carries `warning: no host uses pin-oci, nothing is declared`. It is not an error.
 
 ---
 

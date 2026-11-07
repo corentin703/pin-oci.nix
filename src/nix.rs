@@ -115,16 +115,20 @@ impl Declared {
             .join(", ")
     }
 
-    /// One line naming the hosts that were left out, empty when there are none.
+    /// Lines naming the hosts that were left out and, when no host uses pin-oci at all,
+    /// a warning. Empty when every host is used.
     pub(crate) fn skipped_note(&self) -> String {
-        if self.skipped.is_empty() {
-            return String::new();
+        let mut note = String::new();
+        if self.all_systems.is_empty() {
+            note.push_str("\npin-oci: warning: no host uses pin-oci, nothing is declared");
         }
-        format!(
-            "
-pin-oci: ignored, pin-oci not enabled: {}",
-            self.skipped.join(", ")
-        )
+        if !self.skipped.is_empty() {
+            note.push_str(&format!(
+                "\npin-oci: ignored, pin-oci not enabled: {}",
+                self.skipped.join(", ")
+            ));
+        }
+        note
     }
 }
 
@@ -140,8 +144,6 @@ pub(crate) struct Target {
 
 #[derive(Debug)]
 pub(crate) enum NixError {
-    /// No `nixosConfigurations` host, or none of them uses pin-oci.
-    NoHost(String),
     /// Every host whose evaluation failed, with the evaluator's message. Nothing was merged.
     Hosts(Vec<(String, String)>),
     Spawn(io::Error),
@@ -155,10 +157,6 @@ pub(crate) enum NixError {
 impl fmt::Display for NixError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::NoHost(flake) => write!(
-                f,
-                "no nixosConfigurations host of '{flake}' uses pin-oci (or pass --flake <flake>#<host>)"
-            ),
             Self::Hosts(errors) => {
                 write!(f, "cannot evaluate {} host(s):", errors.len())?;
                 for (host, e) in errors {
@@ -243,11 +241,7 @@ pub(crate) fn declared(evaluator: &dyn Evaluator, flake: &str) -> Result<Declare
     if !errors.is_empty() {
         return Err(NixError::Hosts(errors));
     }
-    let merged = Declared::merge(hosts);
-    if merged.all_systems.is_empty() {
-        return Err(NixError::NoHost(base.to_owned()));
-    }
-    Ok(merged)
+    Ok(Declared::merge(hosts))
 }
 
 #[cfg(test)]
@@ -407,15 +401,24 @@ mod tests {
     }
 
     #[test]
-    fn no_host_or_no_host_using_pin_oci_is_an_error() {
+    fn no_host_or_no_host_using_pin_oci_declares_nothing_with_a_warning() {
         let none = StubEvaluator::routed().route(NAMES, "[]");
-        assert!(matches!(declared(&none, "."), Err(NixError::NoHost(_))));
+        let got = declared(&none, ".").unwrap();
+        assert!(got.targets.is_empty() && got.all_systems.is_empty());
+        assert!(got.skipped_note().contains("warning: no host uses pin-oci"));
 
         let unused = StubEvaluator::routed()
             .route(NAMES, r#"["a","b"]"#)
             .route(A, "null")
             .route(B, "null");
-        assert!(matches!(declared(&unused, "."), Err(NixError::NoHost(_))));
+        let got = declared(&unused, ".").unwrap();
+        assert!(got.targets.is_empty());
+        let note = got.skipped_note();
+        assert!(note.contains("warning: no host uses pin-oci"), "{note}");
+        assert!(
+            note.contains("ignored, pin-oci not enabled: a, b"),
+            "{note}"
+        );
 
         let absent = StubEvaluator::routed().route_failing(NAMES, "does not provide attribute");
         assert!(matches!(

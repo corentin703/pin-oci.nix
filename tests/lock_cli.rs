@@ -446,7 +446,7 @@ fn without_flake_one_failing_host_exits_2_and_writes_nothing() {
 }
 
 #[test]
-fn without_flake_and_without_any_pin_oci_host_exits_2() {
+fn without_flake_and_without_any_pin_oci_host_names_the_ignored_hosts() {
     let fx = Fixture::new("no-host");
     fx.executable(
         "nix",
@@ -456,8 +456,12 @@ fn without_flake_and_without_any_pin_oci_host_exits_2() {
 esac"#,
     );
     let out = fx.bare(&[]);
-    assert_eq!(out.status.code(), Some(2));
-    assert!(stderr(&out).contains("uses pin-oci"), "{}", stderr(&out));
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert!(
+        stdout(&out).contains("ignored, pin-oci not enabled: plain"),
+        "{}",
+        stdout(&out)
+    );
 }
 
 const SRI: &str = "sha256-AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=";
@@ -562,5 +566,85 @@ fn update_dry_does_not_hash_images_to_pull() {
     assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
     assert!(!fx.skopeo_log().contains(" copy "), "no image fetched");
     assert!(!fx.nix_log().contains("hash file"));
+    assert!(!fx.lockfile().exists());
+}
+
+/// Fake nix for a flake whose hosts `a` and `b` do not use pin-oci.
+fn nix_no_host_uses_pin_oci(fx: &Fixture) {
+    fx.executable(
+        "nix",
+        r#"case "$3" in
+  *'#nixosConfigurations') printf '%s' '["a","b"]' ;;
+  *) printf null ;;
+esac"#,
+    );
+}
+
+#[test]
+fn no_host_using_pin_oci_writes_an_empty_lockfile_with_a_warning() {
+    let fx = Fixture::new("empty-no-host");
+    nix_no_host_uses_pin_oci(&fx);
+    fx.skopeo();
+
+    let out = fx.bare(&[]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert!(
+        stdout(&out).contains("warning: no host uses pin-oci"),
+        "{}",
+        stdout(&out)
+    );
+    let lock = fs::read_to_string(fx.lockfile()).unwrap();
+    assert!(
+        lock.contains(r#""version": 1"#) && !lock.contains("docker.io"),
+        "{lock}"
+    );
+    assert_eq!(fx.bare(&["check"]).status.code(), Some(0));
+
+    let again = fx.bare(&[]);
+    assert!(
+        stdout(&again).contains("already up to date"),
+        "{}",
+        stdout(&again)
+    );
+    assert_eq!(fs::read_to_string(fx.lockfile()).unwrap(), lock);
+}
+
+#[test]
+fn an_existing_lockfile_is_emptied_when_nothing_is_declared_anymore() {
+    let fx = Fixture::new("empty-prune");
+    fx.nix("x86_64-linux", &[CADDY]);
+    fx.skopeo();
+    assert_eq!(fx.run("lock").status.code(), Some(0));
+    assert!(fs::read_to_string(fx.lockfile()).unwrap().contains("caddy"));
+
+    nix_no_host_uses_pin_oci(&fx);
+    let out = fx.bare(&[]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert!(stdout(&out).contains("- docker.io/library/caddy:2-alpine"));
+    assert!(!fs::read_to_string(fx.lockfile()).unwrap().contains("caddy"));
+}
+
+#[test]
+fn a_host_with_pin_oci_and_no_image_writes_an_empty_lockfile_without_warning() {
+    let fx = Fixture::new("empty-no-image");
+    fx.nix("x86_64-linux", &[]);
+    fx.skopeo();
+
+    let out = fx.run("lock");
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert!(!stdout(&out).contains("warning"), "{}", stdout(&out));
+    assert!(!fs::read_to_string(fx.lockfile())
+        .unwrap()
+        .contains("docker.io"));
+}
+
+#[test]
+fn an_evaluation_failure_is_still_an_error_when_listing_hosts() {
+    let fx = Fixture::new("empty-eval-fails");
+    fx.executable("nix", "echo 'error: no nixosConfigurations' >&2; exit 1");
+    fx.skopeo();
+
+    let out = fx.bare(&[]);
+    assert_eq!(out.status.code(), Some(2));
     assert!(!fx.lockfile().exists());
 }
