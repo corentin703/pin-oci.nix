@@ -2,9 +2,10 @@
 //! The fake skopeo replays real captured outputs. Offline.
 
 use std::fs;
-use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::process::{Command, Output};
+
+mod common;
 
 const FIXTURES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures");
 
@@ -36,8 +37,7 @@ impl Fixture {
 
     fn executable(&self, name: &str, body: &str) {
         let path = self.dir.join("bin").join(name);
-        fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
-        fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+        common::write_executable(&path, &format!("#!/bin/sh\n{body}\n"));
     }
 
     fn nix(&self, system: &str, targets: &[&str]) {
@@ -113,12 +113,12 @@ esac"#,
 
     fn lock_with(&self, extra: &[&str]) -> Output {
         let flake = format!("{}#box", self.dir.join("flake").display());
-        Command::new(env!("CARGO_BIN_EXE_pin-oci"))
-            .args(["lock", "--flake", &flake])
-            .args(extra)
-            .env("PATH", self.dir.join("bin"))
-            .output()
-            .unwrap()
+        common::output(
+            Command::new(env!("CARGO_BIN_EXE_pin-oci"))
+                .args(["lock", "--flake", &flake])
+                .args(extra)
+                .env("PATH", self.dir.join("bin")),
+        )
     }
 
     /// The caddy tag now points at other digests.
@@ -136,20 +136,20 @@ esac"#,
 
     fn check(&self) -> Output {
         let flake = format!("{}#box", self.dir.join("flake").display());
-        Command::new(env!("CARGO_BIN_EXE_pin-oci"))
-            .args(["lock", "check", "--flake", &flake])
-            .env("PATH", self.dir.join("bin"))
-            .output()
-            .unwrap()
+        common::output(
+            Command::new(env!("CARGO_BIN_EXE_pin-oci"))
+                .args(["lock", "check", "--flake", &flake])
+                .env("PATH", self.dir.join("bin")),
+        )
     }
 
     fn run(&self, command: &str) -> Output {
         let flake = format!("{}#box", self.dir.join("flake").display());
-        Command::new(env!("CARGO_BIN_EXE_pin-oci"))
-            .args([command, "--flake", &flake])
-            .env("PATH", self.dir.join("bin"))
-            .output()
-            .unwrap()
+        common::output(
+            Command::new(env!("CARGO_BIN_EXE_pin-oci"))
+                .args([command, "--flake", &flake])
+                .env("PATH", self.dir.join("bin")),
+        )
     }
 }
 
@@ -394,13 +394,13 @@ esac"#
 
     /// Runs in the flake directory with no `--flake`.
     fn bare(&self, args: &[&str]) -> Output {
-        Command::new(env!("CARGO_BIN_EXE_pin-oci"))
-            .arg("lock")
-            .args(args)
-            .current_dir(self.dir.join("flake"))
-            .env("PATH", self.dir.join("bin"))
-            .output()
-            .unwrap()
+        common::output(
+            Command::new(env!("CARGO_BIN_EXE_pin-oci"))
+                .arg("lock")
+                .args(args)
+                .current_dir(self.dir.join("flake"))
+                .env("PATH", self.dir.join("bin")),
+        )
     }
 }
 
