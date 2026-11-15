@@ -75,7 +75,10 @@ let
   missingHashKeys = lib.unique (
     map describe (
       lib.filter (
-        c: wantsPull c && isLocked c && !(((lockOf c).images.${(parseRef c.image).key}).arch.${currentSystem} ? nixHash)
+        c:
+        wantsPull c
+        && isLocked c
+        && !(((lockOf c).images.${(parseRef c.image).key}).arch.${currentSystem} ? nixHash)
       ) (lib.attrValues unpinned)
     )
   );

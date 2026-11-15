@@ -15,7 +15,8 @@ let
   lockProject = ./fixtures/project.lock;
   absentProject = ./fixtures/absent-project.lock; # intentionally does not exist
 
-  pick = c: a: "sha256:${lib.concatStrings (lib.replicate 64 (if system == "aarch64-linux" then a else c))}";
+  pick =
+    c: a: "sha256:${lib.concatStrings (lib.replicate 64 (if system == "aarch64-linux" then a else c))}";
   hostDigest = pick "a" "c"; # caddy:2-alpine in ok.lock
   projectDigest = pick "1" "2"; # caddy:2-alpine in project.lock
 
@@ -133,7 +134,9 @@ in
       expected = [ true ];
     };
     testAnAbsentProjectLockfileFails = {
-      expr = failedByPinOci (evalApp { lockFile = absentProject; });
+      expr = failedByPinOci (evalApp {
+        lockFile = absentProject;
+      });
       expected = [ true ];
     };
     testNothingIsLoweredWhileAProjectImageIsUnlocked = {
@@ -147,7 +150,9 @@ in
     testProjectWithoutLockFileIsLockedWithTheHost = {
       expr = {
         image = image (evalApp { lockFile = null; }) "app-proxy";
-        targets = targets (evalApp { lockFile = null; });
+        targets = targets (evalApp {
+          lockFile = null;
+        });
       };
       expected = {
         image = caddy hostDigest;
