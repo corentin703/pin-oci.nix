@@ -451,6 +451,26 @@ evaluation, as does a `dependsOn` naming a service that is not in the project.
 
 `pin-oci lock` locks project images with the others; the CLI needs no flag for projects.
 
+#### Project lockfiles
+
+A flake that ships a project can ship its own `pin-oci.lock` and make the project use it:
+
+```nix
+# in the module of the flake that defines the project
+virtualisation.pin-oci.projects.palabre.followLockFile = lib.mkDefault ./pin-oci.lock;
+```
+
+Your build then reads that file for the project's images: they keep the digests the flake's
+author locked, and your `pin-oci lock` leaves them alone (it neither resolves nor prunes them).
+To lock them yourself instead, override it:
+
+```nix
+virtualisation.pin-oci.projects.palabre.followLockFile = null; # your lockFile
+```
+
+An image missing from the project's lockfile fails evaluation, naming that file. The flake locks
+its own images from an example configuration where `followLockFile = null`.
+
 ### 9. Convert a compose file
 
 `pin-oci convert` turns a `docker-compose.yml` into a project module, so you do not retype it:

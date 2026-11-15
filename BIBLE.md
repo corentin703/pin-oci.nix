@@ -345,6 +345,12 @@ Each enabled project generates `<backend>-<project>.target` (e.g. `podman-monito
 5. **Feeding the CLI:**
 Project services are lowered into `virtualisation.pin-oci.containers`, so `virtualisation.pin-oci.lockTargets` covers them with no extra code; `pin-oci lock` consumes that single option.
 
+6. **`followLockFile`:**
+`projects.<p>.followLockFile` (default `null`: the host's `lockFile`, as before) names the lockfile the images of the project follow. A flake that ships a project sets it, with `lib.mkDefault`, to its own `pin-oci.lock`; the module then reads that file as is for those images, at evaluation, in place of the host's: the project keeps the digests its author locked. The host overrides it like any option: `null` or its own file takes the images over, and they are then locked by the host's `pin-oci lock`.
+* Fail-fast is per lockfile: an unlocked image is reported with the file it is missing from when that is not the host's.
+* `lockTargets` only holds the images locked in the host's lockfile. The images of another lockfile are neither resolved nor pruned by the host's CLI; their owner locks them with the CLI in the flake that ships the project (with `followLockFile = null` and its own `lockFile`, in an example configuration).
+* Containers carry an internal `lockFile` option (set by the project, never forwarded to `oci-containers`). The CLI and the lockfile format are unchanged.
+
 ### 6.3 Conversion from compose (`pin-oci convert`)
 
 `pin-oci convert <file> [--name <project>] [--output <path>] [--strict]` turns a docker-compose file into a module declaring a `virtualisation.pin-oci.projects.<name>`. It is a convenience of the CLI: Nix evaluation never reads a compose file, so evaluation purity (§1) is untouched. The flow is `convert`, review, then `pin-oci lock` (images stay floating tags until locked). It is a **useful subset of compose**, not compose.

@@ -14,4 +14,13 @@
       Needs the `nixHash` that `pin-oci lock` records for such images.
     '';
   };
+
+  # Set by `projects.<name>.lockFile`; never by hand. `null`: the host's lockFile.
+  options.lockFile = lib.mkOption {
+    type = lib.types.nullOr lib.types.path;
+    default = null;
+    internal = true;
+    visible = false;
+    description = "Lockfile this container's image is locked in.";
+  };
 }

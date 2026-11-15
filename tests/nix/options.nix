@@ -105,10 +105,12 @@ in
       expr =
         let
           pinOci = builtins.attrNames (
-            # `pullImage` is the one option pin-oci adds; it is consumed, never forwarded.
+            # `pullImage` and `lockFile` are the options pin-oci adds; they are consumed,
+            # never forwarded.
             removeAttrs viaPinOci.virtualisation.pin-oci.containers.web [
               "_module"
               "pullImage"
+              "lockFile"
             ]
           );
           oci = builtins.attrNames direct.virtualisation.oci-containers.containers.web;

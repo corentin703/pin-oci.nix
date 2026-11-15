@@ -3,6 +3,13 @@
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions follow the
 `version` of `Cargo.toml`.
 
+## [Unreleased]
+
+### Added
+- `projects.<name>.followLockFile`: a project shipped by a flake can use the flake's own
+  `pin-oci.lock` for its images; the host can override it. Without it nothing changes, and the
+  CLI and the lockfile format are untouched.
+
 ## [0.2.0] - 2026-11-07
 
 ### Added

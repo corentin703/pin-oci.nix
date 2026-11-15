@@ -13,14 +13,22 @@ let
   currentSystem = pkgs.stdenv.hostPlatform.system;
 
   # Read lazily: only the assertion and the lowering depend on the lockfile.
-  lockData =
-    if builtins.pathExists cfg.lockFile then
-      builtins.fromJSON (builtins.readFile cfg.lockFile)
+  readLock =
+    file:
+    if builtins.pathExists file then
+      builtins.fromJSON (builtins.readFile file)
     else
       {
         version = 1;
         images = { };
       };
+
+  # A container is locked in the lockfile of its project, else in the host's.
+  lockFileOf = c: if c.lockFile == null then cfg.lockFile else c.lockFile;
+  lockOf = c: readLock (lockFileOf c);
+  # What the host's `pin-oci lock` manages; the other lockfiles belong to the flakes shipping them.
+  # Short-circuits so that the host's lockFile is only read when a project sets its own.
+  hostManaged = c: c.lockFile == null || c.lockFile == cfg.lockFile;
 
   pinContainerModule = import ./container-module.nix { inherit options; };
 
@@ -28,7 +36,7 @@ let
 
   wantsPull = c: if c.pullImage == null then cfg.pullImage else c.pullImage;
 
-  # Consumed by the pin-oci CLI. MUST NOT depend on lockData.
+  # Consumed by the pin-oci CLI. MUST NOT depend on the lockfiles content.
   # `pullImage` is set when any container sharing the image pulls it into the store.
   lockTargets = lib.mapAttrs (
     key: group:
@@ -39,16 +47,24 @@ let
       inherit (r) registry repository tag;
       pullImage = lib.any wantsPull group;
     }
-  ) (lib.groupBy (c: (parseRef c.image).key) (lib.attrValues unpinned));
+  ) (lib.groupBy (c: (parseRef c.image).key) (lib.filter hostManaged (lib.attrValues unpinned)));
 
-  isMissing =
-    key:
+  isLocked =
+    c:
     let
-      entry = (lockData.images or { }).${key} or null;
+      entry = ((lockOf c).images or { }).${(parseRef c.image).key} or null;
     in
-    entry == null || !((entry.arch or { }) ? ${currentSystem});
+    entry != null && (entry.arch or { }) ? ${currentSystem};
 
-  missingKeys = lib.filter isMissing (builtins.attrNames lockTargets);
+  # `<key>`, followed by the lockfile when it is not the host's.
+  describe =
+    c:
+    let
+      key = (parseRef c.image).key;
+    in
+    if hostManaged c then key else "${key} (${toString (lockFileOf c)})";
+
+  missingKeys = lib.unique (map describe (lib.filter (c: !isLocked c) (lib.attrValues unpinned)));
   formattedList = lib.concatMapStringsSep "\n  - " (k: k) missingKeys;
 
   pulledPinned = lib.filter (
@@ -56,9 +72,13 @@ let
   ) (builtins.attrNames cfg.containers);
 
   # Locked images that must be pulled into the store but carry no hash for this platform.
-  missingHashKeys = lib.filter (
-    key: lockTargets.${key}.pullImage && !(lockData.images.${key}.arch.${currentSystem} ? nixHash)
-  ) (lib.filter (key: !(lib.elem key missingKeys)) (builtins.attrNames lockTargets));
+  missingHashKeys = lib.unique (
+    map describe (
+      lib.filter (
+        c: wantsPull c && isLocked c && !(((lockOf c).images.${(parseRef c.image).key}).arch.${currentSystem} ? nixHash)
+      ) (lib.attrValues unpinned)
+    )
+  );
 
   # Replace the floating tag by the locked digest, or by the image fetched into the store.
   resolveContainer =
@@ -68,8 +88,9 @@ let
       base = removeAttrs containerCfg [
         "_module"
         "pullImage"
+        "lockFile"
       ];
-      locked = lockData.images.${r.key}.arch.${currentSystem};
+      locked = (lockOf containerCfg).images.${r.key}.arch.${currentSystem};
       name = "${r.registry}/${r.repository}";
     in
     if r.pinned then

@@ -91,6 +91,20 @@ let
         default = { };
         description = "Services of the project, with the options of a container.";
       };
+
+      followLockFile = lib.mkOption {
+        type = lib.types.nullOr lib.types.path;
+        default = null;
+        example = lib.literalExpression "./pin-oci.lock";
+        description = ''
+          Lockfile the images of this project follow. `null` (the default) is the host's
+          `virtualisation.pin-oci.lockFile`. A flake that ships a project sets it (with
+          `lib.mkDefault`) to its own `pin-oci.lock`, which the host then uses as is: the project
+          keeps the digests its author locked, and the host's `pin-oci lock` does not touch them.
+          The host takes the images over by setting it to `null` (or to its own file): they are
+          then locked with the host's.
+        '';
+      };
     };
   };
 
@@ -132,6 +146,7 @@ let
         ++ map (renameNetworkValue renameNetwork) svc.networks;
       volumes = map (renameVolumeEntry renameVolume) svc.volumes;
       extraOptions = renameNetworkOptions renameNetwork svc.extraOptions;
+      lockFile = pc.followLockFile;
     };
 
   containers = lib.concatMapAttrs (
