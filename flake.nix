@@ -152,6 +152,10 @@
             overlay = self.overlays.default;
             package = pin-oci;
           };
+          examples-ci = import ./tests/nix/examples-ci.nix {
+            inherit pkgs pin-oci;
+            version = (builtins.fromTOML (builtins.readFile ./Cargo.toml)).package.version;
+          };
           infra-scripts = import ./tests/nix/infra-scripts.nix {
             inherit pkgs nixpkgs;
             module = self.nixosModules.default;

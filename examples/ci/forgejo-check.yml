@@ -1,0 +1,26 @@
+# Copy to .forgejo/workflows/pin-oci-check.yml (or .github/workflows/ on Forgejo).
+#
+# Same as github-check.yml for Forgejo Actions. Set `runs-on` to a label of your runner: a runner
+# that already has Nix can drop the install step.
+name: pin-oci check
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  check:
+    runs-on: docker
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      # Forgejo resolves a bare `owner/name@ref` on its own actions host: use the full URL.
+      - uses: https://github.com/cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            extra-substituters = https://pin-oci.cachix.org
+            extra-trusted-public-keys = pin-oci.cachix.org-1:rnJNoJhMLyEkTckqap7U3sTpic1xvACQlpSNqFHTPys=
+      - name: Check the lockfile
+        run: nix run github:corentin703/pin-oci.nix/v0.3.0 -- lock check --flake .

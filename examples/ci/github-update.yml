@@ -1,0 +1,53 @@
+# Copy to .github/workflows/pin-oci-update.yml
+#
+# Moves every tag to its current digests and opens a pull request when something changed.
+# Merge it once your own checks pass: the lockfile is the only file that changes.
+name: pin-oci update
+
+on:
+  schedule:
+    - cron: "0 5 * * 1" # Mondays
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: pin-oci-update
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      # A pull request opened with GITHUB_TOKEN does not trigger other workflows (the check
+      # included). Use a personal access token or a GitHub App token if you want it to.
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            extra-substituters = https://pin-oci.cachix.org
+            extra-trusted-public-keys = pin-oci.cachix.org-1:rnJNoJhMLyEkTckqap7U3sTpic1xvACQlpSNqFHTPys=
+      # Private registries: log in first (`skopeo login`, or write REGISTRY_AUTH_FILE from a secret).
+      - name: Update the lockfile
+        run: nix run github:corentin703/pin-oci.nix/v0.3.0 -- lock update --flake .
+      - name: Open a pull request
+        run: |
+          if git diff --quiet pin-oci.lock; then
+            echo "Nothing to update."
+            exit 0
+          fi
+          branch="bot/pin-oci-$(date +%Y-%m-%dT%H-%M-%S)"
+          git config user.name "pin-oci bot"
+          git config user.email "pin-oci-bot@users.noreply.github.com"
+          git checkout -b "$branch"
+          git commit -m "chore(pin-oci): update pin-oci.lock" pin-oci.lock
+          git push origin "$branch"
+          gh pr create --base main --head "$branch" \
+            --title "chore(pin-oci): update pin-oci.lock" \
+            --body "Automated \`pin-oci lock update\`."

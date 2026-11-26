@@ -1,0 +1,51 @@
+# Copy to .forgejo/workflows/pin-oci-update.yml
+#
+# Same as github-update.yml for Forgejo Actions: the pull request is opened through the
+# Forgejo API. Needs a `BOT_TOKEN` secret (a token that can push branches and open pull
+# requests), because the default token cannot trigger the other workflows.
+name: pin-oci update
+
+on:
+  schedule:
+    - cron: "0 5 * * 1" # Mondays
+  workflow_dispatch:
+
+concurrency:
+  group: pin-oci-update
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: docker
+    timeout-minutes: 30
+    env:
+      BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.BOT_TOKEN }}
+      - uses: https://github.com/cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            extra-substituters = https://pin-oci.cachix.org
+            extra-trusted-public-keys = pin-oci.cachix.org-1:rnJNoJhMLyEkTckqap7U3sTpic1xvACQlpSNqFHTPys=
+      - name: Update the lockfile
+        run: nix run github:corentin703/pin-oci.nix/v0.3.0 -- lock update --flake .
+      - name: Open a pull request
+        run: |
+          if git diff --quiet pin-oci.lock; then
+            echo "Nothing to update."
+            exit 0
+          fi
+          branch="bot/pin-oci-$(date +%Y-%m-%dT%H-%M-%S)"
+          git config user.name "pin-oci bot"
+          git config user.email "pin-oci-bot@example.invalid"
+          git checkout -b "$branch"
+          git commit -m "chore(pin-oci): update pin-oci.lock" pin-oci.lock
+          git push origin "$branch"
+          curl -f -X POST "${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/pulls" \
+            -H "Authorization: token ${BOT_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "$(jq -n --arg h "$branch" \
+                  '{title: "chore(pin-oci): update pin-oci.lock", head: $h, base: "main"}')"
