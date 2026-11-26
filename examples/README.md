@@ -10,8 +10,11 @@ Each directory is a flake with a NixOS configuration. The part that concerns pin
 | [`multi-platform/`](multi-platform) | An x86_64 server and an aarch64 NAS sharing one lockfile. |
 | [`rootless/`](rootless) | A project run by one rootless Podman user, with the users declared by you (`users.nix`). Adapted from a production host. |
 
-None of them ships a `pin-oci.lock`: a digest is data from the registry, so you generate it.
-From the example directory:
+`app-with-database`, `multi-platform` and `rootless` ship the `pin-oci.lock` that `pin-oci lock`
+wrote, so you can see what it looks like next to the module that reads it. It is a snapshot: the
+digests are those of the day it was generated and they age, so generate your own. `simple` ships
+none, because `nix flake init` copies it into your repository. A digest is data from the registry,
+so you generate it. From the example directory:
 
 ```console
 $ git init && git add .          # a flake only sees files git tracks
@@ -20,6 +23,6 @@ $ git add pin-oci.lock
 $ nix flake check                # or nixos-rebuild --flake .#<host>
 ```
 
-Before `pin-oci lock`, evaluation fails with the command to run: that is the guarantee, not a
-bug. The Nix tests evaluate these modules against a fixture lockfile
-(`tests/nix/examples.nix`).
+Without a lockfile (`simple`, or an image the lock does not know), evaluation fails with the
+command to run: that is the guarantee, not a bug. The Nix tests evaluate these modules against a
+fixture lockfile and against the lockfiles they ship (`tests/nix/examples.nix`).

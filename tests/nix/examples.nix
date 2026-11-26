@@ -208,5 +208,57 @@ in
       expr = failedByPinOci (withLock lockAbsent system rootless);
       expected = [ true ];
     };
+
+    # ---- the lockfiles the examples ship: what `pin-oci lock` wrote, read as the examples do ----
+    # No `withLock` here: each module's own `lockFile = ./pin-oci.lock` is the one under test. An
+    # image declared by the example but missing from its lock would fail evaluation fast.
+    testShippedLocksPinEveryImageOfTheirExample = {
+      expr =
+        let
+          pinnedImages =
+            sys: modules:
+            let
+              c = evalOn sys modules;
+            in
+            {
+              failed = failed c;
+              unpinned = lib.filter (i: !(lib.hasInfix "@sha256:" i)) (lib.attrValues (images c));
+              count = lib.length (lib.attrNames (images c));
+            };
+        in
+        {
+          app = pinnedImages system app;
+          rootless = pinnedImages system rootless;
+          server = pinnedImages x86 [ common ];
+          nas = pinnedImages arm [
+            common
+            nas
+          ];
+        };
+      expected =
+        let
+          ok = count: {
+            failed = [ ];
+            unpinned = [ ];
+            inherit count;
+          };
+        in
+        {
+          app = ok 2;
+          rootless = ok 2;
+          server = ok 1;
+          nas = ok 2;
+        };
+    };
+    # Falsification: the shipped lock of one example is not enough for another one.
+    testShippedLockOfMultiPlatformDoesNotCoverTheAppExample = {
+      expr = failedByPinOci (
+        evalOn system [
+          (examples + "/app-with-database/containers.nix")
+          { virtualisation.pin-oci.lockFile = lib.mkForce (examples + "/multi-platform/pin-oci.lock"); }
+        ]
+      );
+      expected = [ true ];
+    };
   };
 }

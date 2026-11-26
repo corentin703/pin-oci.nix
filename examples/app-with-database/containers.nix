@@ -25,7 +25,7 @@
         };
 
         app = {
-          image = "miniflux/miniflux:2.2";
+          image = "miniflux/miniflux:latest";
           dependsOn = [ "db" ];
           ports = [ "8080:8080" ];
           environment.RUN_MIGRATIONS = "1";

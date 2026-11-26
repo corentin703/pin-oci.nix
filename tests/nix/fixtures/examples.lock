@@ -52,10 +52,10 @@
         }
       }
     },
-    "docker.io/miniflux/miniflux:2.2": {
+    "docker.io/miniflux/miniflux:latest": {
       "registry": "docker.io",
       "repository": "miniflux/miniflux",
-      "tag": "2.2",
+      "tag": "latest",
       "arch": {
         "x86_64-linux": {
           "digest": "sha256:5555555555555555555555555555555555555555555555555555555555555555",

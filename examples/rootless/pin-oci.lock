@@ -1,0 +1,54 @@
+{
+  "version": 1,
+  "images": {
+    "docker.io/library/caddy:2-alpine": {
+      "registry": "docker.io",
+      "repository": "library/caddy",
+      "tag": "2-alpine",
+      "arch": {
+        "aarch64-linux": {
+          "digest": "sha256:9ee998103a2bc0d4392bbe9738b4069da1562d6920b3cd8088cfd098a8270120",
+          "os": "linux",
+          "architecture": "arm64"
+        },
+        "armv7l-linux": {
+          "digest": "sha256:cd089201b7f688bdf591b1b4294dfa387e5a3a044b57865b56216c061e6fda3b",
+          "os": "linux",
+          "architecture": "arm"
+        },
+        "riscv64-linux": {
+          "digest": "sha256:c1452cfb7312272d50f6e234f1c477f9a9ef130ef5642b3ca9ed0a7fdcb01287",
+          "os": "linux",
+          "architecture": "riscv64"
+        },
+        "x86_64-linux": {
+          "digest": "sha256:fc9cbc100585871d18d4e451cca7021785c90a7006087427ae5ceb3e4efe6424",
+          "os": "linux",
+          "architecture": "amd64"
+        }
+      }
+    },
+    "docker.io/traefik/whoami:v1.10": {
+      "registry": "docker.io",
+      "repository": "traefik/whoami",
+      "tag": "v1.10",
+      "arch": {
+        "aarch64-linux": {
+          "digest": "sha256:fd9d367a04f2a76b784d2a0c84933d4cf463a464d3aa4cdec8dba49772cf041d",
+          "os": "linux",
+          "architecture": "arm64"
+        },
+        "armv7l-linux": {
+          "digest": "sha256:873003027eaa303c641f7978f9f88f2762e330ac08358ec8449809698d8cf0ab",
+          "os": "linux",
+          "architecture": "arm"
+        },
+        "x86_64-linux": {
+          "digest": "sha256:02d8fe035f170f91cbb5e458a57f4cefab747436f8244a0eb2d66785fe5e565f",
+          "os": "linux",
+          "architecture": "amd64"
+        }
+      }
+    }
+  }
+}

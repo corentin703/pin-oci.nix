@@ -1,0 +1,59 @@
+{
+  "version": 1,
+  "images": {
+    "docker.io/library/caddy:2-alpine": {
+      "registry": "docker.io",
+      "repository": "library/caddy",
+      "tag": "2-alpine",
+      "arch": {
+        "aarch64-linux": {
+          "digest": "sha256:9ee998103a2bc0d4392bbe9738b4069da1562d6920b3cd8088cfd098a8270120",
+          "os": "linux",
+          "architecture": "arm64"
+        },
+        "armv7l-linux": {
+          "digest": "sha256:cd089201b7f688bdf591b1b4294dfa387e5a3a044b57865b56216c061e6fda3b",
+          "os": "linux",
+          "architecture": "arm"
+        },
+        "riscv64-linux": {
+          "digest": "sha256:c1452cfb7312272d50f6e234f1c477f9a9ef130ef5642b3ca9ed0a7fdcb01287",
+          "os": "linux",
+          "architecture": "riscv64"
+        },
+        "x86_64-linux": {
+          "digest": "sha256:fc9cbc100585871d18d4e451cca7021785c90a7006087427ae5ceb3e4efe6424",
+          "os": "linux",
+          "architecture": "amd64"
+        }
+      }
+    },
+    "docker.io/library/redis:7-alpine": {
+      "registry": "docker.io",
+      "repository": "library/redis",
+      "tag": "7-alpine",
+      "arch": {
+        "aarch64-linux": {
+          "digest": "sha256:52d1ea8a654b10f06af3ecda4e9dbcd035c7868b5c49ee7975de917f81de13db",
+          "os": "linux",
+          "architecture": "arm64"
+        },
+        "armv7l-linux": {
+          "digest": "sha256:973af33a5e053fb9df16599af28df0216cbea1641e2ee07f55f3ea778b490870",
+          "os": "linux",
+          "architecture": "arm"
+        },
+        "riscv64-linux": {
+          "digest": "sha256:3f9eb842ad54eb030a7a35e50cb991f013866b9c04ea35748f165f1d8d9e25e3",
+          "os": "linux",
+          "architecture": "riscv64"
+        },
+        "x86_64-linux": {
+          "digest": "sha256:e4ee3e03ce8f75471f40937a7c6b2b0e500390b6812fcdf5cb32c01295ded446",
+          "os": "linux",
+          "architecture": "amd64"
+        }
+      }
+    }
+  }
+}
