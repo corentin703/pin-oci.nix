@@ -26,6 +26,11 @@ let
     rootlessUsers
     (examples + "/rootless/containers.nix")
   ];
+  multiLib = import (examples + "/rootless-multi/oci-lib.nix");
+  multi = [
+    (examples + "/rootless-multi/oci-users.nix")
+    (examples + "/rootless-multi/containers.nix")
+  ];
   common = examples + "/multi-platform/common.nix";
   nas = examples + "/multi-platform/nas.nix";
 
@@ -209,6 +214,120 @@ in
       expected = [ true ];
     };
 
+    # ---- rootless-multi: several projects, one user each, and the lib that derives them ----
+    testExampleRootlessMultiPinsEveryProject = {
+      expr = images (withLock lockExamples system multi);
+      expected = {
+        blog-db = pinned "library/postgres" system postgres;
+        blog-app = pinned "miniflux/miniflux" system miniflux;
+        tools-whoami = pinned "traefik/whoami" system whoami;
+      };
+    };
+    testExampleRootlessMultiEachProjectRunsAsItsOwnUser = {
+      expr =
+        let
+          c = withLock lockExamples system multi;
+          svc = c.systemd.services;
+        in
+        {
+          blogNetwork = svc.podman-network-blog-default.serviceConfig.User;
+          toolsNetwork = svc.podman-network-tools-default.serviceConfig.User;
+          blogXdg = svc.podman-network-blog-default.environment.XDG_RUNTIME_DIR;
+          toolsXdg = svc.podman-network-tools-default.environment.XDG_RUNTIME_DIR;
+          failed = failed c;
+        };
+      expected = {
+        blogNetwork = "oci-blog";
+        toolsNetwork = "oci-tools";
+        blogXdg = "/run/user/2001";
+        toolsXdg = "/run/user/2002";
+        failed = [ ];
+      };
+    };
+    # The users declared by oci-users.nix are the ones the projects name, with what pin-oci reads.
+    testExampleRootlessMultiUsersMatchTheProjects = {
+      expr =
+        let
+          c = withLock lockExamples system multi;
+          u = n: c.users.users.${c.virtualisation.pin-oci.projects.${n}.podman.user};
+        in
+        lib.genAttrs [ "blog" "tools" ] (n: {
+          inherit (u n) uid linger home;
+        });
+      expected = {
+        blog = {
+          uid = 2001;
+          linger = true;
+          home = "/srv/oci/blog/home";
+        };
+        tools = {
+          uid = 2002;
+          linger = true;
+          home = "/srv/oci/tools/home";
+        };
+      };
+    };
+    # Falsifiable: a range that overlapped another one would give a container of one user the
+    # files of another.
+    testExampleRootlessMultiSubIdRangesDoNotOverlap = {
+      expr =
+        let
+          c = withLock lockExamples system multi;
+          range = n: lib.head c.users.users.${multiLib.userName n}.subUidRanges;
+          a = range "blog";
+          b = range "tools";
+        in
+        {
+          disjoint = a.startUid + a.count <= b.startUid || b.startUid + b.count <= a.startUid;
+          uidsAreUnique =
+            lib.length (lib.unique (lib.attrValues multiLib.uids)) == lib.length (lib.attrValues multiLib.uids);
+        };
+      expected = {
+        disjoint = true;
+        uidsAreUnique = true;
+      };
+    };
+    testExampleRootlessMultiHostId = {
+      expr = {
+        root = multiLib.hostId "blog" 0;
+        first = multiLib.hostId "blog" 1;
+        postgres = multiLib.hostId "blog" 70;
+        otherUser = multiLib.hostId "tools" 1;
+      };
+      expected = {
+        root = 2001;
+        first = 1000000;
+        postgres = 1000069;
+        otherUser = 1065536;
+      };
+    };
+    testExampleRootlessMultiDatabaseDirectoryBelongsToTheHostIdOfPostgres = {
+      expr = lib.elem "d /srv/oci/blog/data/db 0700 1000069 1000069 -" (
+        (withLock lockExamples system multi).systemd.tmpfiles.rules
+      );
+      expected = true;
+    };
+    # A container run by another user than the owner of the project network would not see it.
+    testExampleRootlessMultiForeignUserFailsEvaluation = {
+      expr =
+        map
+          (
+            a: lib.hasInfix "tools-whoami (oci-blog) uses network 'tools-default' owned by oci-tools" a.message
+          )
+          (
+            failed (
+              withLock lockExamples system (
+                multi ++ [ { virtualisation.pin-oci.projects.tools.services.whoami.podman.user = "oci-blog"; } ]
+              )
+            )
+          );
+      expected = [ true ];
+    };
+    testExampleRootlessMultiFailsWithoutALockfile = {
+      expr = failedByPinOci (withLock lockAbsent system multi);
+      expected = [ true ];
+    };
+
     # ---- the lockfiles the examples ship: what `pin-oci lock` wrote, read as the examples do ----
     # No `withLock` here: each module's own `lockFile = ./pin-oci.lock` is the one under test. An
     # image declared by the example but missing from its lock would fail evaluation fast.
@@ -229,6 +348,7 @@ in
         {
           app = pinnedImages system app;
           rootless = pinnedImages system rootless;
+          multi = pinnedImages system multi;
           server = pinnedImages x86 [ common ];
           nas = pinnedImages arm [
             common
@@ -246,6 +366,7 @@ in
         {
           app = ok 2;
           rootless = ok 2;
+          multi = ok 3;
           server = ok 1;
           nas = ok 2;
         };
