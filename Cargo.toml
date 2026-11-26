@@ -1,6 +1,6 @@
 [package]
 name = "pin-oci"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 description = "Deterministic OCI image pinning for NixOS (virtualisation.oci-containers)"
 license = "MIT"

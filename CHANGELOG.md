@@ -5,7 +5,16 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions follo
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-26
+
 ### Added
+- `examples/`: a single container, an app with its database as one project, and one lockfile
+  shared by an x86_64 server and an aarch64 NAS. `nix flake init -t github:corentin703/pin-oci.nix`
+  writes the first one. `examples/ci/` has `lock check` and a scheduled `lock update` pull
+  request for GitHub Actions and Forgejo Actions.
+- `BIBLE.md` states the lockfile format, its stability and its versioning policy.
+- README: comparison with `pullImage`, Renovate, npins and arion, a limitations section and a
+  roadmap (aarch64 binary cache, simpler rootless Podman, insecure registries, cosign).
 - `projects.<name>.followLockFile`: a project shipped by a flake can use the flake's own
   `pin-oci.lock` for its images; the host can override it. Without it nothing changes, and the
   CLI and the lockfile format are untouched.
