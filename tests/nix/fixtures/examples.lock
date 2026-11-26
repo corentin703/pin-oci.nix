@@ -35,6 +35,23 @@
         }
       }
     },
+    "docker.io/library/redis:7-alpine": {
+      "registry": "docker.io",
+      "repository": "library/redis",
+      "tag": "7-alpine",
+      "arch": {
+        "x86_64-linux": {
+          "digest": "sha256:7777777777777777777777777777777777777777777777777777777777777777",
+          "os": "linux",
+          "architecture": "amd64"
+        },
+        "aarch64-linux": {
+          "digest": "sha256:8888888888888888888888888888888888888888888888888888888888888888",
+          "os": "linux",
+          "architecture": "arm64"
+        }
+      }
+    },
     "docker.io/miniflux/miniflux:2.2": {
       "registry": "docker.io",
       "repository": "miniflux/miniflux",
@@ -52,18 +69,18 @@
         }
       }
     },
-    "docker.io/library/redis:7-alpine": {
+    "docker.io/traefik/whoami:v1.10": {
       "registry": "docker.io",
-      "repository": "library/redis",
-      "tag": "7-alpine",
+      "repository": "traefik/whoami",
+      "tag": "v1.10",
       "arch": {
         "x86_64-linux": {
-          "digest": "sha256:7777777777777777777777777777777777777777777777777777777777777777",
+          "digest": "sha256:9999999999999999999999999999999999999999999999999999999999999999",
           "os": "linux",
           "architecture": "amd64"
         },
         "aarch64-linux": {
-          "digest": "sha256:8888888888888888888888888888888888888888888888888888888888888888",
+          "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
           "os": "linux",
           "architecture": "arm64"
         }

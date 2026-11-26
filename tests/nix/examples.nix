@@ -21,6 +21,11 @@ let
 
   simple = [ (examples + "/simple/containers.nix") ];
   app = [ (examples + "/app-with-database/containers.nix") ];
+  rootlessUsers = examples + "/rootless/users.nix";
+  rootless = [
+    rootlessUsers
+    (examples + "/rootless/containers.nix")
+  ];
   common = examples + "/multi-platform/common.nix";
   nas = examples + "/multi-platform/nas.nix";
 
@@ -48,6 +53,10 @@ let
   redis = {
     x = "7";
     a = "8";
+  };
+  whoami = {
+    x = "9";
+    a = "a";
   };
 
   x86 = "x86_64-linux";
@@ -150,6 +159,54 @@ in
     testExampleMultiPlatformServerIgnoresTheMissingArch = {
       expr = failed (withLock x86Only x86 [ common ]);
       expected = [ ];
+    };
+
+    # ---- rootless: the integrator's users.nix and the project that names its user ----
+    testExampleRootlessPinsTheProject = {
+      expr = images (withLock lockExamples system rootless);
+      expected = {
+        web-proxy = pinned "library/caddy" system caddy;
+        web-whoami = pinned "traefik/whoami" system whoami;
+      };
+    };
+    testExampleRootlessNetworkAndVolumeRunAsTheProjectUser = {
+      expr =
+        let
+          c = withLock lockExamples system rootless;
+        in
+        {
+          network = c.systemd.services.podman-network-web-default.serviceConfig.User;
+          volume = c.systemd.services.podman-volume-web_caddy_data.serviceConfig.User;
+          xdg = c.systemd.services.podman-network-web-default.environment.XDG_RUNTIME_DIR;
+          failed = failed c;
+        };
+      expected = {
+        network = "oci-web";
+        volume = "oci-web";
+        xdg = "/run/user/2001";
+        failed = [ ];
+      };
+    };
+    # users.nix and containers.nix are two halves: the user the project names is the one declared.
+    testExampleRootlessUsersMatchTheProject = {
+      expr =
+        let
+          c = withLock lockExamples system rootless;
+          u = c.users.users.${c.virtualisation.pin-oci.projects.web.podman.user};
+        in
+        {
+          inherit (u) uid linger;
+          home = u.home;
+        };
+      expected = {
+        uid = 2001;
+        linger = true;
+        home = "/srv/oci/web/home";
+      };
+    };
+    testExampleRootlessFailsWithoutALockfile = {
+      expr = failedByPinOci (withLock lockAbsent system rootless);
+      expected = [ true ];
     };
   };
 }

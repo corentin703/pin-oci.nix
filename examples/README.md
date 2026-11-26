@@ -8,6 +8,7 @@ Each directory is a flake with a NixOS configuration. The part that concerns pin
 | [`simple/`](simple) | One container. Also the `nix flake init` template. |
 | [`app-with-database/`](app-with-database) | A project: an app and its PostgreSQL database, with a volume, start order and a restart target. |
 | [`multi-platform/`](multi-platform) | An x86_64 server and an aarch64 NAS sharing one lockfile. |
+| [`rootless/`](rootless) | A project run by one rootless Podman user, with the users declared by you (`users.nix`). Adapted from a production host. |
 
 None of them ships a `pin-oci.lock`: a digest is data from the registry, so you generate it.
 From the example directory:

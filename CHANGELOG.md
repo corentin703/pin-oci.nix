@@ -5,6 +5,14 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions follo
 
 ## [Unreleased]
 
+### Added
+- Rootless Podman networks and volumes: `networks.<n>.podman.user` and `volumes.<v>.podman.user`
+  (default `root`, nothing changes without it) run the init unit as that user, from the account
+  in `users.users`; pin-oci declares no user. `projects.<p>.podman.user` is the default owner of a
+  project's services, networks and volumes. Evaluation fails for a user without a static `uid`,
+  for the `docker` backend, and for a container that does not run as the owner of a resource it
+  uses. `examples/rootless` shows a project and the users it needs; the roadmap entry is done.
+
 ## [0.3.0] - 2026-11-26
 
 ### Added

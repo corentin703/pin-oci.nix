@@ -379,8 +379,35 @@ Names that are not declared in `virtualisation.pin-oci.networks` / `volumes` (`h
 are left to the backend. Network and volume names must match
 `[a-zA-Z0-9][a-zA-Z0-9_.-]*`, otherwise evaluation fails.
 
-> **Limitation.** Resources are created by root. A rootless Podman container
-> (`podman.user` other than `root`) does not see them.
+#### Rootless Podman
+
+A rootless Podman network or volume belongs to the storage of one user, so a rootless container
+only sees the resources of its own user. Say which user manages a resource the way you say
+which user runs a container, with the same option:
+
+```nix
+virtualisation.pin-oci = {
+  networks.app-net.podman.user = "oci-app";
+  volumes.app_data.podman.user = "oci-app";
+  containers.db = {
+    image = "postgres:17-alpine";
+    podman.user = "oci-app";
+    networks = [ "app-net" ];
+    volumes = [ "app_data:/var/lib/postgresql/data" ];
+  };
+};
+```
+
+For a project, set it once: `projects.<name>.podman.user` is the default owner of its services,
+networks and volumes, and each of them can override it.
+
+You keep your users. pin-oci declares no account, `subuid`, `linger` or directory: it reads the
+`uid`, `home` and `linger` of `users.users.<name>` and runs the init unit of the resource as that
+user, after its `user@<uid>.service`. Evaluation fails, with what to write, when the user has no
+static `uid` or is not declared, when the backend is Docker, or when a container does not run as the
+owner of a network or volume it uses. `podman.user` defaults to `root`: nothing changes without it.
+Network and volume names declared outside a project stay global, so two users cannot own the same
+name. See [`examples/rootless`](examples/rootless) for a project with the users it needs.
 
 ### 8. Projects
 
@@ -603,17 +630,16 @@ workflow in [`examples/ci/`](examples/ci) is that one, without the author's secr
 from public registries and from a private Forgejo registry. One host pulls five images into the
 Nix store (`pullImage`).
 
-What hurts today is on the [roadmap](#roadmap): creating networks and volumes for rootless
-containers means wiring the unit to the user's Podman by hand.
+Their networks and volumes used to be wired by hand to each user's Podman; `podman.user` on
+networks, volumes and projects now covers that (see [Rootless Podman](#rootless-podman)).
 
 ---
 
 ## Limitations
 
-- **Rootless: Podman only.** Containers and projects run rootless through `podman.user`.
-  Networks and volumes declared in `virtualisation.pin-oci` are created by root, so a rootless
-  container does not see them without wiring the unit yourself. The `docker` backend is always
-  root.
+- **Rootless: Podman only.** `podman.user` also applies to networks, volumes and projects
+  (see [Rootless Podman](#rootless-podman)); the `docker` backend always runs as root. The users
+  themselves (uid, `subuid`, `linger`, home, storage) are yours to declare.
 - **Insecure registries are unusable.** `pin-oci` ignores your `registries.conf`, so a registry
   declared `insecure` (plain HTTP) there does not work. See
   [Registry access](#registry-access-and-authentication).
@@ -634,10 +660,6 @@ Not done, listed on purpose:
 
 - **Binary cache for `aarch64-linux`.** An aarch64 host, a NAS for instance, compiles the CLI
   itself today.
-- **Full rootless, made easy (Podman only).** One option for a fully rootless Podman host, so
-  networks and volumes are created under `podman.user` without the manual wiring (`after` /
-  `requires` on `user@<uid>.service`, `XDG_RUNTIME_DIR`, `serviceConfig.User`). The `docker`
-  backend is not concerned.
 - **HTTP / insecure registries.**
 - **Optional signature verification** (cosign) at lock time.
 
