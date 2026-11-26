@@ -612,7 +612,7 @@ solve neighbouring problems.
 | `dockerTools.pullImage` + `nix-prefetch-docker` | Fetches an image into the Nix store, with a hash you compute and write by hand. | Pins too, but you maintain each `imageDigest` / `sha256` yourself, per platform. pin-oci writes them for you and can still [fetch into the store](#fetching-images-into-the-nix-store-optional) when you want it. |
 | Renovate | Opens PRs that bump versions or digests. | Complementary: it finds updates, it does not give Nix a per-platform digest at evaluation. `pin-oci lock update` can run in the same kind of PR workflow (see [`examples/ci/`](examples/ci)). |
 | npins | Pins sources (git, tarballs) for Nix. | Not for OCI images. |
-| arion | Runs docker-compose services described in Nix. | A different layer: it brings its own runtime. If you used arion only to run pinned images, pin-oci with `oci-containers` may be enough; if you want compose semantics, it is not a replacement. |
+| arion | Runs docker-compose services described in Nix. | Overlapping use, different mechanism. arion brings its own runtime: a binary that deploys the compose services. [`virtualisation.pin-oci.projects`](#8-projects) describes the same shape (services, networks, volumes, start order) but is only syntax: it lowers to `virtualisation.oci-containers` and systemd units, with no extra binary on the host: the `pin-oci` CLI only runs where you edit the configuration (it writes `pin-oci.lock`), and the machine that deploys needs only the module and the lockfile. If you used arion to run a few services together, projects may replace it; if you need compose semantics beyond what projects support, it does not. |
 
 ---
 
