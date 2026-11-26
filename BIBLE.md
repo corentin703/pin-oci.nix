@@ -71,6 +71,17 @@ Normalization rules:
 
 Index entries whose platform is `unknown/unknown` (attestation manifests) are ignored.
 
+### Stability and versioning
+
+The lockfile is a public interface: it is committed, read by the module and written by the CLI, and a flake can ship its own (see `followLockFile`, §6).
+
+* **Field reference.** `version` (integer), `images` (map from canonical key to entry). An entry holds `registry`, `repository`, `tag` and `arch`, a map from Nix system to `{ digest, os, architecture }` plus the optional `nixHash`. Output is deterministic: keys are sorted and the same inputs give the same bytes.
+* **`version` changes only on a breaking change of the format**, i.e. when a lockfile written by a newer pin-oci can no longer be read with the old meaning. Version 1 is the only one that exists.
+* **Optional fields may be added in version 1.** A field that is added is optional and its absence keeps the old meaning (as `nixHash` did).
+* **The CLI is strict.** It refuses a lockfile whose `version` it does not support (`unsupported lockfile version N`) and a lockfile with a field it does not know (`deny_unknown_fields`). Upgrade the CLI before using a lockfile written by a newer one. Adding an optional field therefore does not break the module, but an older CLI refuses the file.
+* **The module reads, never validates the schema.** It looks up `images.<key>.arch.<system>.digest` (and `nixHash` when pulling into the store) and fails evaluation with the command to run when they are missing. It does not check `version`. The strict validation lives in the CLI (`lock check` and `lock list` parse the file), so run it in CI.
+* **A change of canonical key rules is a breaking change** (§2 "Canonical key"): it would orphan every entry, so it requires a `version` bump.
+
 ---
 
 ## 3. Technical Breakdown by Milestone
@@ -276,7 +287,7 @@ A container references:
 
 Only names declared in `virtualisation.pin-oci.networks` / `volumes` produce a dependency; any other name (`host`, a pre-existing volume, a bind mount) is left alone. Nothing is added to a container that was not lowered (unlocked image).
 
-**Limitation:** resources are created by root. A rootless Podman container (`podman.user != "root"`) does not see them.
+**Limitation:** resources are created by root, with the configured backend. A rootless Podman container (`podman.user != "root"`) does not see them unless the unit is wired by hand to that user's Podman (`user@<uid>.service`, `XDG_RUNTIME_DIR`, `serviceConfig.User`). Rootless applies to Podman only; the `docker` backend always runs as root. Simplifying this is on the README roadmap.
 
 ---
 
