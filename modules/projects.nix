@@ -19,10 +19,22 @@ let
 
   serviceModule = import ./container-module.nix { inherit options; };
 
+  # A project's user is the default owner of what the project creates; each one can override it.
+  userOption =
+    projectUser:
+    lib.mkOption {
+      type = lib.types.str;
+      default = if projectUser == null then "root" else projectUser;
+      defaultText = lib.literalExpression ''the project's podman.user, else "root"'';
+      description = "The user whose Podman owns this resource (see `virtualisation.pin-oci.networks.<name>.podman.user`).";
+    };
+
   networkModule =
+    projectUser:
     { name, ... }:
     {
       options = {
+        podman.user = userOption projectUser;
         enable = lib.mkOption {
           type = lib.types.bool;
           # Declaring a network creates it; the implicit one has to be asked for.
@@ -50,8 +62,9 @@ let
       };
     };
 
-  volumeModule = {
+  volumeModule = projectUser: {
     options = {
+      podman.user = userOption projectUser;
       external = lib.mkOption {
         type = lib.types.bool;
         default = false;
@@ -67,46 +80,65 @@ let
     };
   };
 
-  projectModule = {
-    options = {
-      enable = lib.mkEnableOption "this project";
+  projectModule =
+    { config, ... }:
+    {
+      options = {
+        enable = lib.mkEnableOption "this project";
 
-      networks = lib.mkOption {
-        type = lib.types.attrsOf (lib.types.submodule networkModule);
-        default = { };
-        description = ''
-          Project networks. `default` is the implicit network every service joins;
-          enable it with `networks.default.enable = true`.
-        '';
-      };
+        podman.user = lib.mkOption {
+          type = lib.types.nullOr lib.types.str;
+          default = null;
+          example = "oci-app";
+          description = ''
+            The user that manages the project, for Podman. It is the default `podman.user` of every
+            service and of every network and volume the project creates; each of them can set its own.
+            The account is the one in `users.users`: the project never declares it. `null` leaves the
+            defaults (`root`).
+          '';
+        };
 
-      volumes = lib.mkOption {
-        type = lib.types.attrsOf (lib.types.submodule volumeModule);
-        default = { };
-        description = "Project volumes.";
-      };
+        networks = lib.mkOption {
+          type = lib.types.attrsOf (lib.types.submodule (networkModule config.podman.user));
+          default = { };
+          description = ''
+            Project networks. `default` is the implicit network every service joins;
+            enable it with `networks.default.enable = true`.
+          '';
+        };
 
-      services = lib.mkOption {
-        type = lib.types.attrsOf (lib.types.submodule serviceModule);
-        default = { };
-        description = "Services of the project, with the options of a container.";
-      };
+        volumes = lib.mkOption {
+          type = lib.types.attrsOf (lib.types.submodule (volumeModule config.podman.user));
+          default = { };
+          description = "Project volumes.";
+        };
 
-      followLockFile = lib.mkOption {
-        type = lib.types.nullOr lib.types.path;
-        default = null;
-        example = lib.literalExpression "./pin-oci.lock";
-        description = ''
-          Lockfile the images of this project follow. `null` (the default) is the host's
-          `virtualisation.pin-oci.lockFile`. A flake that ships a project sets it (with
-          `lib.mkDefault`) to its own `pin-oci.lock`, which the host then uses as is: the project
-          keeps the digests its author locked, and the host's `pin-oci lock` does not touch them.
-          The host takes the images over by setting it to `null` (or to its own file): they are
-          then locked with the host's.
-        '';
+        services = lib.mkOption {
+          type = lib.types.attrsOf (
+            lib.types.submodule [
+              serviceModule
+              { podman.user = lib.mkIf (config.podman.user != null) (lib.mkDefault config.podman.user); }
+            ]
+          );
+          default = { };
+          description = "Services of the project, with the options of a container.";
+        };
+
+        followLockFile = lib.mkOption {
+          type = lib.types.nullOr lib.types.path;
+          default = null;
+          example = lib.literalExpression "./pin-oci.lock";
+          description = ''
+            Lockfile the images of this project follow. `null` (the default) is the host's
+            `virtualisation.pin-oci.lockFile`. A flake that ships a project sets it (with
+            `lib.mkDefault`) to its own `pin-oci.lock`, which the host then uses as is: the project
+            keeps the digests its author locked, and the host's `pin-oci lock` does not touch them.
+            The host takes the images over by setting it to `null` (or to its own file): they are
+            then locked with the host's.
+          '';
+        };
       };
     };
-  };
 
   projects = lib.filterAttrs (_: p: p.enable) cfg.projects;
 
@@ -158,16 +190,16 @@ let
 
   networks = lib.concatMapAttrs (
     project: pc:
-    lib.mapAttrs' (n: nc: lib.nameValuePair (prefixed project n) { inherit (nc) subnet internal; }) (
-      ownNetworks pc
-    )
+    lib.mapAttrs' (
+      n: nc: lib.nameValuePair (prefixed project n) { inherit (nc) subnet internal podman; }
+    ) (ownNetworks pc)
   ) projects;
 
   volumes = lib.concatMapAttrs (
     project: pc:
-    lib.mapAttrs' (v: vc: lib.nameValuePair (prefixedVolume project v) { inherit (vc) driver; }) (
-      ownVolumes pc
-    )
+    lib.mapAttrs' (
+      v: vc: lib.nameValuePair (prefixedVolume project v) { inherit (vc) driver podman; }
+    ) (ownVolumes pc)
   ) projects;
 
   # Unit of a service: an explicit `serviceName` wins over the `<backend>-<container>` default.

@@ -73,6 +73,42 @@ let
   ];
   rootNet = unit rootDefault "podman-network-app-net";
 
+  project =
+    {
+      user,
+      service ? { },
+      volume ? { },
+    }:
+    {
+      virtualisation.pin-oci.projects.app = {
+        enable = true;
+        podman.user = user;
+        networks.default.enable = true;
+        volumes.data = volume;
+        services.web = {
+          image = "caddy:2-alpine";
+          volumes = [ "data:/data" ];
+        }
+        // service;
+      };
+    };
+  owned = c: {
+    container = c.virtualisation.pin-oci.containers.app-web.podman.user;
+    network = c.virtualisation.pin-oci.networks.app-default.podman.user;
+    volume = c.virtualisation.pin-oci.volumes.app_data.podman.user;
+  };
+  evalProject =
+    args:
+    eval [
+      base
+      (account { })
+      (account {
+        name = "oci-other";
+        uid = 2002;
+      })
+      (project args)
+    ];
+
   asserts = modules: failedByPinOci (eval ([ base ] ++ modules));
   docker = {
     virtualisation.oci-containers.backend = lib.mkForce "docker";
@@ -247,6 +283,76 @@ in
         (resources { })
       ]);
       expected = [ ];
+    };
+
+    # ---- projects: one line says which user manages the project ----
+    testProjectUserIsTheDefaultOfEverythingItCreates = {
+      expr = owned (evalProject {
+        user = "oci-app";
+      });
+      expected = {
+        container = "oci-app";
+        network = "oci-app";
+        volume = "oci-app";
+      };
+    };
+    testProjectResourceUnitsRunAsTheProjectUser = {
+      expr =
+        let
+          c = evalProject { user = "oci-app"; };
+        in
+        {
+          network = c.systemd.services.podman-network-app-default.serviceConfig.User;
+          volume = c.systemd.services.podman-volume-app_data.serviceConfig.User;
+          failed = failed c;
+        };
+      expected = {
+        network = "oci-app";
+        volume = "oci-app";
+        failed = [ ];
+      };
+    };
+    testProjectWithoutUserStaysRoot = {
+      expr = owned (eval [
+        base
+        (project { user = null; })
+      ]);
+      expected = {
+        container = "root";
+        network = "root";
+        volume = "root";
+      };
+    };
+    testServiceCanOverrideTheProjectUser = {
+      expr =
+        (evalProject {
+          user = "oci-app";
+          service.podman.user = "oci-other";
+        }).virtualisation.pin-oci.containers.app-web.podman.user;
+      expected = "oci-other";
+    };
+    # An override that leaves a service apart from the project's resources is the §5.3 assertion.
+    testServiceOverrideAwayFromItsResourcesIsRefused = {
+      expr = failedByPinOci (evalProject {
+        user = "oci-app";
+        service.podman.user = "oci-other";
+      });
+      expected = [ true ];
+    };
+    testResourceOverrideAwayFromItsServicesIsRefused = {
+      expr = failedByPinOci (evalProject {
+        user = "oci-app";
+        volume.podman.user = "oci-other";
+      });
+      expected = [ true ];
+    };
+    testResourceCanOverrideTheProjectUser = {
+      expr =
+        (evalProject {
+          user = "oci-app";
+          volume.podman.user = "oci-other";
+        }).virtualisation.pin-oci.volumes.app_data.podman.user;
+      expected = "oci-other";
     };
   };
 }
