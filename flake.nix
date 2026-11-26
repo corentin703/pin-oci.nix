@@ -169,6 +169,10 @@
             inherit pkgs;
             module = self.nixosModules.default;
           };
+          vm-rootless = import ./tests/nix/vm-rootless.nix {
+            inherit pkgs;
+            module = self.nixosModules.default;
+          };
           vm-pull-image = import ./tests/nix/vm-pull-image.nix {
             inherit pkgs;
             module = self.nixosModules.default;

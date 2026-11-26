@@ -62,4 +62,5 @@ jobs:
           # One test at a time: two tests in parallel mean four VMs on a 4-vCPU runner.
           nix build --max-jobs 1 --print-build-logs --no-link \
             .#checks.x86_64-linux.vm-infra \
-            .#checks.x86_64-linux.vm-projects
+            .#checks.x86_64-linux.vm-projects \
+            .#checks.x86_64-linux.vm-rootless
