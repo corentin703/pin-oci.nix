@@ -361,7 +361,8 @@ let
     // (import ./convert.nix helpers).tests
     // (import ./options.nix helpers).tests
     // (import ./pull-image.nix helpers).tests
-    // (import ./project-lockfile.nix helpers).tests;
+    // (import ./project-lockfile.nix helpers).tests
+    // (import ./examples.nix helpers).tests;
   failures = lib.debug.runTests allTests;
 in
 pkgs.runCommand "pin-oci-module-tests" { } (

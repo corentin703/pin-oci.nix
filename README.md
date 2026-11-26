@@ -21,6 +21,11 @@ with the command to run.
 > [`BIBLE.md`](BIBLE.md); [Why the agent files](#why-agentsmd-claudemd-and-biblemd) explains
 > the other files at the root.
 
+**Two-minute start.** `nix flake init -t github:corentin703/pin-oci.nix` writes a flake with one
+pinned container; then `git init && git add . && nix run github:corentin703/pin-oci.nix -- lock`
+generates `pin-oci.lock`. More in [`examples/`](examples): a project with a database, and one
+lockfile for an x86_64 server and an aarch64 NAS.
+
 - [User manual](#user-manual)
 - [How it compares](#how-it-compares)
 - [Limitations](#limitations)
@@ -737,6 +742,7 @@ pin-oci.nix/
 │   ├── resources.nix   # pure helpers: name rule, network / volume reference parsing, rewriting
 │   ├── container-module.nix  # oci-containers options shared by containers and services
 │   └── refs.nix        # pure image reference normalization
+├── examples/           # flakes to copy from; `simple/` is the `nix flake init` template
 ├── tests/              # Rust e2e + fixtures; nix/ holds the module, script and VM tests
 ├── flake.nix           # nixosModules.default, overlays.default, packages.pin-oci, devShell, checks
 ├── devenv.nix          # development environment

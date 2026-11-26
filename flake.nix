@@ -21,6 +21,12 @@
     {
       nixosModules.default = import ./modules/default.nix;
 
+      # `nix flake init -t github:corentin703/pin-oci.nix`: the `simple` example, ready to lock.
+      templates.default = {
+        path = ./examples/simple;
+        description = "A NixOS host running one container pinned with pin-oci";
+      };
+
       # Opt-in: `nixpkgs.overlays = [ pin-oci.overlays.default ];` gives `pkgs.pin-oci`.
       # Reuses `packages.<system>.pin-oci` as is, so the binary cache still applies.
       overlays.default = final: _prev: {
