@@ -46,6 +46,10 @@ let
       SYS_ADMIN = false;
     };
     devices = [ "/dev/fuse" ];
+    tmpFs."/run" = [
+      "noexec"
+      "size=64m"
+    ];
     networks = [ "host" ];
     extraOptions = [
       "--init"
