@@ -273,6 +273,7 @@ in
       expected = {
         subnet = "10.5.0.0/24";
         internal = true;
+        podman.user = "root";
       };
     };
     testDefaultNetworkCannotBeExternal = {
@@ -289,8 +290,14 @@ in
     testProjectVolumesArePrefixedAndDeclaredGlobally = {
       expr = mon.virtualisation.pin-oci.volumes;
       expected = {
-        monitoring_prom_data.driver = "local";
-        monitoring_grafana_data.driver = "local";
+        monitoring_prom_data = {
+          driver = "local";
+          podman.user = "root";
+        };
+        monitoring_grafana_data = {
+          driver = "local";
+          podman.user = "root";
+        };
       };
     };
     testVolumeReferencesAreRewritten = {
@@ -471,6 +478,7 @@ in
         created.p-backend = {
           subnet = "10.6.0.0/24";
           internal = true;
+          podman.user = "root";
         };
         networks = [ "p-backend:alias=db" ];
         extraOptions = [
