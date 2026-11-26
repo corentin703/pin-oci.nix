@@ -28,6 +28,7 @@ lockfile for an x86_64 server and an aarch64 NAS.
 
 - [User manual](#user-manual)
 - [How it compares](#how-it-compares)
+- [In production](#in-production)
 - [Limitations](#limitations)
 - [Roadmap](#roadmap)
 - [Development environment](#development-environment)
@@ -585,6 +586,25 @@ solve neighbouring problems.
 | Renovate | Opens PRs that bump versions or digests. | Complementary: it finds updates, it does not give Nix a per-platform digest at evaluation. `pin-oci lock update` can run in the same kind of PR workflow (see [`examples/ci/`](examples/ci)). |
 | npins | Pins sources (git, tarballs) for Nix. | Not for OCI images. |
 | arion | Runs docker-compose services described in Nix. | A different layer: it brings its own runtime. If you used arion only to run pinned images, pin-oci with `oci-containers` may be enough; if you want compose semantics, it is not a replacement. |
+
+---
+
+## In production
+
+pin-oci runs the author's own infrastructure: four NixOS hosts in four configuration
+repositories (VPS and LXC), 51 containers declared through `virtualisation.pin-oci`, all on
+Podman and all rootless (`podman.user`), grouped in a few compose-style projects. The four
+lockfiles hold 43 images between them.
+
+Since the first lockfile was committed (mid-October 2026, about six weeks), the lockfiles have
+had 98 commits, most of them from a scheduled `pin-oci lock update` that opens a pull request, is
+validated by CI (`nix flake check`, a build and a deploy dry run) and merged on success: the
+workflow in [`examples/ci/`](examples/ci) is that one, without the author's secrets. Images come
+from public registries and from a private Forgejo registry. One host pulls five images into the
+Nix store (`pullImage`).
+
+What hurts today is on the [roadmap](#roadmap): creating networks and volumes for rootless
+containers means wiring the unit to the user's Podman by hand.
 
 ---
 
