@@ -72,6 +72,21 @@ let
 in
 {
   tests = {
+    # A `follows` on nixpkgs makes Nix build the CLI against the user's nixpkgs: no binary cache.
+    testExampleFlakesDoNotFollowNixpkgs = {
+      expr =
+        lib.mapAttrs (_: f: lib.hasInfix "follows =" (builtins.readFile (examples + "/${f}/flake.nix")))
+          {
+            simple = "simple";
+            app = "app-with-database";
+            multi = "multi-platform";
+          };
+      expected = {
+        simple = false;
+        app = false;
+        multi = false;
+      };
+    };
     # ---- simple ----
     testExampleSimpleIsPinned = {
       expr = images (withLock lockExamples system simple);

@@ -3,10 +3,8 @@
 
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
-    pin-oci = {
-      url = "github:corentin703/pin-oci.nix";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
+    # No `inputs.nixpkgs.follows`, on purpose: it would defeat the binary cache (see the README).
+    pin-oci.url = "github:corentin703/pin-oci.nix";
   };
 
   outputs =
