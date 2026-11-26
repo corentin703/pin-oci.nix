@@ -354,5 +354,24 @@ in
         }).virtualisation.pin-oci.volumes.app_data.podman.user;
       expected = "oci-other";
     };
+
+    # Regression: a project without a user must not define `podman`, which docker refuses.
+    testProjectWithoutUserEvaluatesOnTheDockerBackend = {
+      expr = failed (eval [
+        base
+        docker
+        (project { user = null; })
+      ]);
+      expected = [ ];
+    };
+    testProjectWithoutUserLeavesPodmanUnsetOnDocker = {
+      expr =
+        (eval [
+          base
+          docker
+          (project { user = null; })
+        ]).virtualisation.oci-containers.containers.app-web.podman;
+      expected = null;
+    };
   };
 }

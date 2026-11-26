@@ -117,7 +117,11 @@ let
           type = lib.types.attrsOf (
             lib.types.submodule [
               serviceModule
-              { podman.user = lib.mkIf (config.podman.user != null) (lib.mkDefault config.podman.user); }
+              {
+                # Not even an empty `podman` when the project has no user: oci-containers refuses the
+                # option with the docker backend.
+                podman = lib.mkIf (config.podman.user != null) { user = lib.mkDefault config.podman.user; };
+              }
             ]
           );
           default = { };
