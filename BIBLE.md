@@ -287,7 +287,24 @@ A container references:
 
 Only names declared in `virtualisation.pin-oci.networks` / `volumes` produce a dependency; any other name (`host`, a pre-existing volume, a bind mount) is left alone. Nothing is added to a container that was not lowered (unlocked image).
 
-**Limitation:** resources are created by root, with the configured backend. A rootless Podman container (`podman.user != "root"`) does not see them unless the unit is wired by hand to that user's Podman (`user@<uid>.service`, `XDG_RUNTIME_DIR`, `serviceConfig.User`). Rootless applies to Podman only; the `docker` backend always runs as root. Simplifying this is on the README roadmap.
+### 5.3 Rootless resources (Podman)
+
+A rootless Podman network or volume belongs to the storage of one user, so a rootless container only sees the resources of its own user. The integrator keeps control of the users (accounts, `uid`, `subuid`/`subgid`, `linger`, home, storage, workspace): pin-oci only lets them say which user manages which resource, exactly as `containers.<c>.podman.user` says which user runs which container.
+
+```nix
+virtualisation.pin-oci.networks.app-net.podman.user = "oci-app";
+virtualisation.pin-oci.volumes.postgres_data.podman.user = "oci-app";
+```
+
+* **Option:** `networks.<n>.podman.user` and `volumes.<v>.podman.user`, type `str`, default `"root"` (same name, type and default as the `oci-containers` option). With `"root"` the unit is exactly the one of §5.2: nothing changes for an existing configuration.
+* **Unit:** for another user, the init unit of §5.2 keeps its name, its idempotent body and its `wantedBy`, and takes the shape `oci-containers` gives a rootless container unit: `serviceConfig.User = <user>`, `environment.HOME = users.users.<user>.home`, `environment.XDG_RUNTIME_DIR = /run/user/<uid>`, `/run/wrappers` in `path` (for `newuidmap`), `after` and `requires` on `user@<uid>.service`, and `wants` and `after` on `linger-users.service` when the user has `linger`.
+* **Read, never written:** `uid`, `home` and `linger` come from the integrator's `users.users.<user>`. pin-oci declares no user, `subuid`, `linger` or directory.
+* **Assertions** (evaluation fails, every message names the resource and what to write):
+  * the `docker` backend with a user other than `root` (Docker has no rootless mode here);
+  * a user missing from `users.users`, or without a static `uid`;
+  * a container whose `podman.user` differs from the owner of a declared network or volume it references (§5.2): it would not see the resource.
+* **Warning:** a user without `linger`, like `oci-containers`.
+* **Names stay global:** two users cannot own two resources of the same name declared in `virtualisation.pin-oci.{networks,volumes}`; projects (§6) avoid it through their prefix.
 
 ---
 
@@ -353,7 +370,9 @@ A `dependsOn` naming a service absent from the project is an assertion failure.
 4. **Project target:**
 Each enabled project generates `<backend>-<project>.target` (e.g. `podman-monitoring.target`), `wantedBy` `multi-user.target` and `wants` every service unit of the project. Each service unit is `partOf` the target, so `start`, `stop` and `restart` on the target apply to all services. The target runs nothing itself. The service unit is the container's `serviceName` (an explicit one is kept). Network and volume init units are not part of the target: services already `require` them. No target is generated for a disabled project.
 
-5. **Feeding the CLI:**
+5. **Rootless owner:**
+`projects.<p>.podman.user` (type `nullOr str`, default `null`) is the user that manages the project: it is applied with `lib.mkDefault` to `podman.user` of every service and of every non-external network and volume of the project (§5.3). A service or a resource sets its own `podman.user` to override it, and an owner that disagrees with a container that references the resource is the assertion of §5.3. `null` leaves every `podman.user` at its default. The project does not create the user.
+6. **Feeding the CLI:**
 Project services are lowered into `virtualisation.pin-oci.containers`, so `virtualisation.pin-oci.lockTargets` covers them with no extra code; `pin-oci lock` consumes that single option.
 
 6. **`followLockFile`:**
