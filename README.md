@@ -1,20 +1,30 @@
 # pin-oci.nix
 
-Deterministic pinning of container images for NixOS, on top of
-`virtualisation.oci-containers`.
+**`virtualisation.oci-containers` without a pin is not reproducible.** `image = "caddy:2-alpine"`
+is a moving target: the same configuration, built a week apart, runs different bits.
 
-You declare images with floating tags (`caddy:2-alpine`). A small CLI, run outside
-the Nix sandbox, resolves them to immutable per-platform digests and writes them to a
-committed `pin-oci.lock`. The NixOS module reads that file and makes
-`virtualisation.oci-containers` run `caddy@sha256:…`. Nix evaluation never touches the
-network, and an image without a valid digest for the host platform fails evaluation
+pin-oci.nix pins every image to an immutable per-platform digest, with no lock-in and no
+runtime of its own. A small CLI, run outside the Nix sandbox, resolves your floating tags
+(`caddy:2-alpine`) and writes the digests to a committed `pin-oci.lock`. The NixOS module reads
+that file and makes `virtualisation.oci-containers` run `caddy@sha256:…`. Nix evaluation never
+touches the network, and an image without a valid digest for the host platform fails evaluation
 with the command to run.
+
+- **Zero lock-in.** Containers are lowered to plain `virtualisation.oci-containers.containers`.
+  Remove pin-oci and what is left is a standard NixOS configuration.
+- **No runtime.** pin-oci never starts a container: Podman or Docker, through
+  `oci-containers`, still does.
 
 > **Status.** All three milestones of [`BIBLE.md`](BIBLE.md) are implemented: the pinning
 > engine (`pin-oci lock` / `pin-oci lock check`), shared networks and volumes, and compose-style
-> projects.
+> projects. The design, the lockfile format and its versioning policy are in
+> [`BIBLE.md`](BIBLE.md); [Why the agent files](#why-agentsmd-claudemd-and-biblemd) explains
+> the other files at the root.
 
 - [User manual](#user-manual)
+- [How it compares](#how-it-compares)
+- [Limitations](#limitations)
+- [Roadmap](#roadmap)
 - [Development environment](#development-environment)
 - [Repository layout](#repository-layout)
 
@@ -135,10 +145,10 @@ itself.
     enable = true;
     lockFile = ./pin-oci.lock;
 
-    containers.traefik = {
-      image = "traefik:v3.0";
+    containers.caddy = {
+      image = "caddy:2-alpine";
       ports = [ "80:80" "443:443" ];
-      volumes = [ "/var/run/docker.sock:/var/run/docker.sock:ro" ];
+      volumes = [ "/srv/caddy/data:/data" ];
     };
   };
 }
@@ -185,7 +195,7 @@ From the flake root, resolve every image and write `pin-oci.lock`:
 ```console
 $ pin-oci lock --flake .#myhost
 pin-oci: wrote ./pin-oci.lock (1 image(s))
-  + docker.io/library/traefik:v3.0
+  + docker.io/library/caddy:2-alpine
 $ git add pin-oci.lock
 ```
 
@@ -301,7 +311,7 @@ not locked for your platform, evaluation stops with:
 
 ```text
 [pin-oci] Missing or unpinned images for 'x86_64-linux' in /nix/store/…-source/pin-oci.lock:
-  - docker.io/library/traefik:v3.0
+  - docker.io/library/caddy:2-alpine
 
 Synchronize the lock file with the command:
   pin-oci lock
@@ -558,6 +568,63 @@ that file are not usable.
 | `no manifest for the host platform …` | The image is not published for your architecture. |
 | `[pin-oci] dependsOn names a service that is not in the project` | Typo in a project `dependsOn`; names are the service names without the project prefix. |
 | `[pin-oci] External resources missing …` | An `external = true` resource is not declared in `virtualisation.pin-oci.networks` / `volumes`. |
+
+## How it compares
+
+pin-oci does one thing: pin the images of `virtualisation.oci-containers`. Nearby tools
+solve neighbouring problems.
+
+| Tool | What it does | Compared with pin-oci |
+| --- | --- | --- |
+| `dockerTools.pullImage` + `nix-prefetch-docker` | Fetches an image into the Nix store, with a hash you compute and write by hand. | Pins too, but you maintain each `imageDigest` / `sha256` yourself, per platform. pin-oci writes them for you and can still [fetch into the store](#fetching-images-into-the-nix-store-optional) when you want it. |
+| Renovate | Opens PRs that bump versions or digests. | Complementary: it finds updates, it does not give Nix a per-platform digest at evaluation. `pin-oci lock update` can run in the same kind of PR workflow (see [`examples/ci/`](examples/ci)). |
+| npins | Pins sources (git, tarballs) for Nix. | Not for OCI images. |
+| arion | Runs docker-compose services described in Nix. | A different layer: it brings its own runtime. If you used arion only to run pinned images, pin-oci with `oci-containers` may be enough; if you want compose semantics, it is not a replacement. |
+
+---
+
+## Limitations
+
+- **Rootless: Podman only.** Containers and projects run rootless through `podman.user`.
+  Networks and volumes declared in `virtualisation.pin-oci` are created by root, so a rootless
+  container does not see them without wiring the unit yourself. The `docker` backend is always
+  root.
+- **Insecure registries are unusable.** `pin-oci` ignores your `registries.conf`, so a registry
+  declared `insecure` (plain HTTP) there does not work. See
+  [Registry access](#registry-access-and-authentication).
+- **Binary cache: `x86_64-linux` only.** An `aarch64-linux` host builds the CLI itself.
+- **No signature verification.** Digests are pinned, signatures are not checked.
+- **`convert` is a subset of compose**, not compose: `build`, `healthcheck`, `restart`,
+  `env_file`, `deploy`, `secrets`, `container_name`, interpolation (`${VAR}`), service network
+  aliases, tmpfs mounts and relative bind mounts are warnings or errors. See
+  [Convert a compose file](#9-convert-a-compose-file).
+- **VM tests need KVM.** CI builds every check except the `vm-*` ones on pull requests; those run
+  on `main` or on demand, on a runner with KVM enabled.
+
+---
+
+## Roadmap
+
+Not done, listed on purpose:
+
+- **Binary cache for `aarch64-linux`.** An aarch64 host, a NAS for instance, compiles the CLI
+  itself today.
+- **Full rootless, made easy (Podman only).** One option for a fully rootless Podman host, so
+  networks and volumes are created under `podman.user` without the manual wiring (`after` /
+  `requires` on `user@<uid>.service`, `XDG_RUNTIME_DIR`, `serviceConfig.User`). The `docker`
+  backend is not concerned.
+- **HTTP / insecure registries.**
+- **Optional signature verification** (cosign) at lock time.
+
+---
+
+## Why AGENTS.md, CLAUDE.md and BIBLE.md
+
+- [`BIBLE.md`](BIBLE.md) is the specification: principles, lockfile format, milestones. It is
+  the reference for how pin-oci behaves.
+- [`AGENTS.md`](AGENTS.md) is the working protocol for AI coding agents on this repository
+  (scope, testing and definition-of-done rules). `CLAUDE.md` is a symlink to it. You can ignore
+  both to use or contribute to pin-oci by hand.
 
 ---
 
