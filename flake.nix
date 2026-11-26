@@ -156,6 +156,7 @@
             inherit pkgs pin-oci;
             version = (builtins.fromTOML (builtins.readFile ./Cargo.toml)).package.version;
           };
+          dependabot = import ./tests/nix/dependabot.nix { inherit pkgs; };
           infra-scripts = import ./tests/nix/infra-scripts.nix {
             inherit pkgs nixpkgs;
             module = self.nixosModules.default;

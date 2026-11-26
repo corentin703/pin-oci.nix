@@ -12,6 +12,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions follo
   project's services, networks and volumes. Evaluation fails for a user without a static `uid`,
   for the `docker` backend, and for a container that does not run as the owner of a resource it
   uses. `examples/rootless` shows a project and the users it needs; the roadmap entry is done.
+- Dependabot: `.github/dependabot.yml` watches the Cargo dependencies, the GitHub Actions and
+  `flake.lock`, weekly. A check fails if an ecosystem it names has lost its manifest.
 
 ## [0.3.0] - 2026-11-26
 

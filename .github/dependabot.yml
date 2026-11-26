@@ -1,0 +1,24 @@
+version: 2
+
+updates:
+  # Rust dependencies of the CLI. The flake builds from Cargo.lock (`cargoLock.lockFile`), so a
+  # bump needs no hash to recompute.
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      minor-and-patch:
+        update-types: [minor, patch]
+
+  # The actions used by .github/workflows.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+
+  # flake.lock: nixpkgs and the other inputs of the flake.
+  - package-ecosystem: nix
+    directory: /
+    schedule:
+      interval: weekly
