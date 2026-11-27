@@ -27,4 +27,4 @@ jobs:
       # Without `#<host>` every host of the flake that enables pin-oci is checked.
       # Pin the CLI to a release tag, like any other input.
       - name: Check the lockfile
-        run: nix run github:corentin703/pin-oci.nix/v0.3.0 -- lock check --flake .
+        run: nix run github:corentin703/pin-oci.nix/v0.4.0 -- lock check --flake .

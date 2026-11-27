@@ -23,4 +23,4 @@ jobs:
             extra-substituters = https://pin-oci.cachix.org
             extra-trusted-public-keys = pin-oci.cachix.org-1:rnJNoJhMLyEkTckqap7U3sTpic1xvACQlpSNqFHTPys=
       - name: Check the lockfile
-        run: nix run github:corentin703/pin-oci.nix/v0.3.0 -- lock check --flake .
+        run: nix run github:corentin703/pin-oci.nix/v0.4.0 -- lock check --flake .

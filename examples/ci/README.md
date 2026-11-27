@@ -8,7 +8,7 @@
 | [`forgejo-update.yml`](forgejo-update.yml) | Forgejo Actions | same, through the Forgejo API |
 
 Copy a file to your repository's workflows directory (the path is in its first line) and adjust
-`runs-on`. The CLI version in `nix run github:corentin703/pin-oci.nix/v0.3.0` is a release tag:
+`runs-on`. The CLI version in `nix run github:corentin703/pin-oci.nix/v0.4.0` is a release tag:
 move it when you upgrade.
 
 - **`lock check`** needs no network access to a registry and writes nothing: it fails (exit 1)

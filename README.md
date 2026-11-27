@@ -134,8 +134,7 @@ Use the `extra-` forms: they add to `cache.nixos.org` instead of replacing it.
   If it says `will be built`, the cache is not configured or not trusted, or the revision
   was not pushed yet.
 
-The cache only holds what CI built on `x86_64-linux`. An `aarch64-linux` host builds the CLI
-itself.
+The cache holds what CI built on `x86_64-linux` and on `aarch64-linux` (a native ARM runner).
 
 ### 2. Declare containers
 
@@ -643,14 +642,14 @@ networks, volumes and projects now covers that (see [Rootless Podman](#rootless-
 - **Insecure registries are unusable.** `pin-oci` ignores your `registries.conf`, so a registry
   declared `insecure` (plain HTTP) there does not work. See
   [Registry access](#registry-access-and-authentication).
-- **Binary cache: `x86_64-linux` only.** An `aarch64-linux` host builds the CLI itself.
 - **No signature verification.** Digests are pinned, signatures are not checked.
 - **`convert` is a subset of compose**, not compose: `build`, `healthcheck`, `restart`,
   `env_file`, `deploy`, `secrets`, `container_name`, interpolation (`${VAR}`), service network
   aliases, tmpfs mounts and relative bind mounts are warnings or errors. See
   [Convert a compose file](#9-convert-a-compose-file).
-- **VM tests need KVM.** CI builds every check except the `vm-*` ones on pull requests; those run
-  on `main` or on demand, on a runner with KVM enabled.
+- **VM tests need KVM.** CI builds every check except the `vm-*` ones on pull requests, on
+  `x86_64-linux` and `aarch64-linux`; the `vm-*` ones run on `x86_64-linux` only, on `main` or on
+  demand, on a runner with KVM enabled.
 
 ---
 
@@ -658,8 +657,6 @@ networks, volumes and projects now covers that (see [Rootless Podman](#rootless-
 
 Not done, listed on purpose:
 
-- **Binary cache for `aarch64-linux`.** An aarch64 host, a NAS for instance, compiles the CLI
-  itself today.
 - **HTTP / insecure registries.**
 - **Optional signature verification** (cosign) at lock time.
 

@@ -5,6 +5,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions follo
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-27
+
 ### Added
 - Rootless Podman networks and volumes: `networks.<n>.podman.user` and `volumes.<v>.podman.user`
   (default `root`, nothing changes without it) run the init unit as that user, from the account
@@ -12,6 +14,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions follo
   project's services, networks and volumes. Evaluation fails for a user without a static `uid`,
   for the `docker` backend, and for a container that does not run as the owner of a resource it
   uses. `examples/rootless` shows a project and the users it needs; the roadmap entry is done.
+- CI: the checks run on `aarch64-linux` too, on a native ARM runner, and the CLI built there is
+  pushed to the Cachix cache. An aarch64 host no longer compiles it; the roadmap entry is done.
+  The NixOS VM tests stay on `x86_64-linux`.
 - Dependabot: `.github/dependabot.yml` watches the Cargo dependencies, the GitHub Actions and
   `flake.lock`, weekly. A check fails if an ecosystem it names has lost its manifest.
 

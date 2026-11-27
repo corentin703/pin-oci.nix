@@ -15,9 +15,19 @@ concurrency:
 
 jobs:
   # Everything that runs offline without KVM: cargo test, clippy, rustfmt, nixfmt, module
-  # evaluation tests, generated-unit script tests. Required on every PR.
+  # evaluation tests, generated-unit script tests. Required on every PR. Runs on x86_64 and on
+  # aarch64 (native ARM runner); each one pushes what it builds to the Cachix cache.
   fast:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - system: x86_64-linux
+            runner: ubuntu-latest
+          - system: aarch64-linux
+            runner: ubuntu-24.04-arm
+    name: fast (${{ matrix.system }})
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
@@ -30,11 +40,11 @@ jobs:
           authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
       - name: Build all checks except the NixOS VM tests
         run: |
-          system=x86_64-linux
+          system=${{ matrix.system }}
           mapfile -t checks < <(nix eval --json ".#checks.${system}" --apply builtins.attrNames \
             | jq -r --arg s "$system" '.[] | select(startswith("vm-") | not) | ".#checks.\($s).\(.)"')
           printf '%s\n' "${checks[@]}"
-          nix build --print-build-logs --no-link "${checks[@]}"
+          nix build --print-build-logs --no-link "${checks[@]}" ".#packages.${system}.pin-oci"
 
   # NixOS VM tests against real podman and docker: need /dev/kvm, so they only run on main
   # or on demand, never as a PR gate.

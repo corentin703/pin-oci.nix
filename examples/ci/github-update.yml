@@ -35,7 +35,7 @@ jobs:
             extra-trusted-public-keys = pin-oci.cachix.org-1:rnJNoJhMLyEkTckqap7U3sTpic1xvACQlpSNqFHTPys=
       # Private registries: log in first (`skopeo login`, or write REGISTRY_AUTH_FILE from a secret).
       - name: Update the lockfile
-        run: nix run github:corentin703/pin-oci.nix/v0.3.0 -- lock update --flake .
+        run: nix run github:corentin703/pin-oci.nix/v0.4.0 -- lock update --flake .
       - name: Open a pull request
         run: |
           if git diff --quiet pin-oci.lock; then
